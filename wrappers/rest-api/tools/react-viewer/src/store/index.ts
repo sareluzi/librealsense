@@ -5,7 +5,6 @@ import type {
   OptionInfo,
   StreamConfig,
   MetadataUpdate,
-  StreamMetadata,
   IMUData,
   ViewMode,
   DeviceState,
@@ -148,7 +147,6 @@ interface AppState {
   fetchSensors: (deviceId: string) => Promise<void>
 
   // Per-device options
-  fetchOptions: (deviceId: string, sensorId: string) => Promise<void>
   setOption: (
     deviceId: string,
     sensorId: string,
@@ -159,14 +157,6 @@ interface AppState {
   // Per-device stream configuration  
   updateStreamConfig: (deviceId: string, config: StreamConfig) => void
   updateSensorConfig: (deviceId: string, sensorId: string, config: Partial<SensorConfig>) => void
-
-  // Per-device streaming
-  startDeviceStreaming: (deviceId: string) => Promise<void>
-  stopDeviceStreaming: (deviceId: string) => Promise<void>
-  startAllStreaming: () => Promise<void>
-  stopAllStreaming: () => Promise<void>
-  startStreaming: () => Promise<void>
-  stopStreaming: () => Promise<void>
 
   // Per-sensor streaming (sensor API)
   startSensorStreaming: (deviceId: string, sensorId: string) => Promise<void>
@@ -181,15 +171,9 @@ interface AppState {
   addIMUData: (type: 'accel' | 'gyro', data: IMUData) => void
   clearIMUHistory: () => void
 
-  // Point cloud (per device)
-  togglePointCloud: (deviceId?: string) => Promise<void>
-  setPointCloudVertices: (deviceIdOrVertices: string | Float32Array | null, vertices?: Float32Array | null) => void
-
   // UI state
   viewMode: ViewMode
   setViewMode: (mode: ViewMode) => Promise<void>
-  isIMUViewerExpanded: boolean
-  toggleIMUViewer: () => void
 
   // Chat/AI Assistant state
   isChatOpen: boolean
@@ -209,8 +193,6 @@ interface AppState {
   setError: (error: string | null) => void
   clearError: () => void
 
-  isStreaming: boolean
-  isPointCloudEnabled: boolean
   pointCloudVertices: Float32Array | null
   // Per-vertex RGB sampled from the live color frame on the server (1 Uint8 per
   // channel, 3 channels per vertex; aligned 1:1 with pointCloudVertices). Null
@@ -362,8 +344,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
     
     if (existing?.isActive) {
       // Deactivate: stop streaming if active, then remove
-      if (existing.isStreaming) {
-        await get().stopDeviceStreaming(device.device_id)
+      for (const [sensorId, status] of Object.entries(existing.sensorStreamingStatus)) {
+        if (status.is_streaming) await get().stopSensorStreaming(device.device_id, sensorId)
       }
       set((s) => {
         const newStates = { ...s.deviceStates }
@@ -380,11 +362,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
         streamConfigs: [],
         sensorConfigs: {},
         isStreaming: false,
-        isStopping: false,
         isActive: true,
         isLoading: true,
         streamMetadata: {},
-        streamingMode: 'idle',
         sensorStreamingStatus: {},
       }
       set((s) => ({
@@ -473,26 +453,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   // Per-device options
-  fetchOptions: async (deviceId, sensorId) => {
-    try {
-      const options = await apiClient.getOptions(deviceId, sensorId)
-      set((state) => ({
-        deviceStates: {
-          ...state.deviceStates,
-          [deviceId]: {
-            ...state.deviceStates[deviceId],
-            options: {
-              ...state.deviceStates[deviceId]?.options,
-              [sensorId]: options,
-            },
-          },
-        },
-      }))
-    } catch (error) {
-      console.error(`Failed to fetch options for sensor ${sensorId}:`, error)
-    }
-  },
-
   setOption: async (deviceId, sensorId, optionId, value) => {
     try {
       await apiClient.setOption(deviceId, sensorId, optionId, value)
@@ -571,159 +531,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
     })
   },
 
-  // Per-device streaming
-  startDeviceStreaming: async (deviceId) => {
-    const state = get()
-    const deviceState = state.deviceStates[deviceId]
-    if (!deviceState) return
-
-    // If a stop is still in progress, wait briefly until it finishes
-    if (deviceState.isStopping) {
-      for (let i = 0; i < 20; i++) {
-        try {
-          const status = await apiClient.getStreamStatus(deviceId)
-          if (!status.stopping) break
-        } catch (e) {
-          // ignore and retry
-        }
-        await new Promise((resolve) => setTimeout(resolve, 150))
-      }
-    }
-
-    const enabledStreamConfigs = deviceState.streamConfigs.filter((c) => c.enable)
-    if (enabledStreamConfigs.length === 0) {
-      set({ error: 'Please enable at least one stream' })
-      return
-    }
-
-    // Apply sensor-level resolution/FPS to each enabled stream config
-    const configsWithSensorSettings = enabledStreamConfigs.map(c => {
-      const sensorConfig = deviceState.sensorConfigs[c.sensor_id]
-      if (sensorConfig) {
-        return {
-          ...c,
-          resolution: sensorConfig.resolution,
-          framerate: sensorConfig.framerate,
-        }
-      }
-      return c
-    })
-
-    try {
-      await apiClient.startStreaming(deviceId, {
-        configs: configsWithSensorSettings,
-        apply_filters: false,
-        reuse_cache: true,
-      })
-      set((s) => ({
-        deviceStates: {
-          ...s.deviceStates,
-          [deviceId]: {
-            ...s.deviceStates[deviceId],
-            isStreaming: true,
-            isStopping: false,
-            streamingMode: 'pipeline',
-          },
-        },
-        error: null,
-      }))
-    } catch (error) {
-      // Extract error message - axios errors have response.data.detail
-      let errorMessage = 'Unknown error'
-      if (error && typeof error === 'object') {
-        const axiosError = error as { response?: { data?: { detail?: string } }; message?: string }
-        if (axiosError.response?.data?.detail) {
-          errorMessage = axiosError.response.data.detail
-        } else if (axiosError.message) {
-          errorMessage = axiosError.message
-        }
-      }
-      set({
-        error: `Failed to start streaming: ${errorMessage}`,
-      })
-    }
-  },
-
-  stopDeviceStreaming: async (deviceId) => {
-    // Optimistically mark stopping and hide stream immediately. Also drop the
-    // last point cloud so the 3D canvas doesn't show a frozen last frame after
-    // stop. If another device is still streaming its next frame will repopulate.
-    set((state) => ({
-      pointCloudVertices: null,
-      pointCloudColors: null,
-      deviceStates: {
-        ...state.deviceStates,
-        [deviceId]: {
-          ...state.deviceStates[deviceId],
-          isStopping: true,
-          isStreaming: false,
-          streamMetadata: {},
-        },
-      },
-    }))
-
-    try {
-      const status = await apiClient.stopStreaming(deviceId)
-      set((state) => ({
-        deviceStates: {
-          ...state.deviceStates,
-          [deviceId]: {
-            ...state.deviceStates[deviceId],
-            isStopping: !!status?.stopping,
-            isStreaming: status?.is_streaming ?? false,
-            streamingMode: 'idle',
-            sensorStreamingStatus: {},
-            streamMetadata: status?.stopping ? state.deviceStates[deviceId].streamMetadata : {},
-          },
-        },
-      }))
-    } catch (error) {
-      set({
-        error: `Failed to stop streaming: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      })
-      // Roll back stopping flag on error
-      set((state) => ({
-        deviceStates: {
-          ...state.deviceStates,
-          [deviceId]: {
-            ...state.deviceStates[deviceId],
-            isStopping: false,
-          },
-        },
-      }))
-    }
-  },
-
-  startAllStreaming: async () => {
-    const state = get()
-    const activeDevices = Object.values(state.deviceStates).filter(ds => ds.isActive)
-    
-    for (const deviceState of activeDevices) {
-      const enabledConfigs = deviceState.streamConfigs.filter(c => c.enable)
-      if (enabledConfigs.length > 0) {
-        await get().startDeviceStreaming(deviceState.device.device_id)
-      }
-    }
-  },
-
-  stopAllStreaming: async () => {
-    const state = get()
-    const streamingDevices = Object.values(state.deviceStates).filter(ds => ds.isStreaming)
-    
-    for (const deviceState of streamingDevices) {
-      await get().stopDeviceStreaming(deviceState.device.device_id)
-    }
-  },
-
-  // Legacy streaming methods
-  startStreaming: async () => {
-    await get().startAllStreaming()
-  },
-
-  stopStreaming: async () => {
-    await get().stopAllStreaming()
-  },
-
   // Per-sensor streaming (sensor API)
   startSensorStreaming: async (deviceId, sensorId) => {
     // Wait for any pending stop operation to complete before starting
@@ -736,12 +543,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
     const state = get()
     const deviceState = state.deviceStates[deviceId]
     if (!deviceState) return
-
-    // Check mode - can't use sensor API if pipeline is active
-    if (deviceState.streamingMode === 'pipeline') {
-      set({ error: 'Stop all streams before using per-sensor control' })
-      return
-    }
 
     // Find ALL enabled stream configs for this sensor (not just first)
     const enabledStreamConfigs = deviceState.streamConfigs.filter(
@@ -776,7 +577,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
           ...s.deviceStates,
           [deviceId]: {
             ...s.deviceStates[deviceId],
-            streamingMode: 'sensor',
             isStreaming: true,
             sensorStreamingStatus: {
               ...s.deviceStates[deviceId].sensorStreamingStatus,
@@ -856,7 +656,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
           ...s.deviceStates,
           [deviceId]: {
             ...deviceState,
-            streamingMode: anyStreaming ? 'sensor' : 'idle',
             isStreaming: anyStreaming,
             sensorStreamingStatus: newSensorStatus,
           },
@@ -887,7 +686,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
               ...s.deviceStates,
               [deviceId]: {
                 ...deviceState,
-                streamingMode: anyStreaming ? 'sensor' : 'idle',
                 isStreaming: anyStreaming,
                 sensorStreamingStatus: newSensorStatus,
               },
@@ -908,7 +706,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
               ...s.deviceStates,
               [deviceId]: {
                 ...deviceState,
-                streamingMode: 'sensor',
                 isStreaming: true,
                 sensorStreamingStatus: {
                   ...deviceState.sensorStreamingStatus,
@@ -1004,41 +801,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
   clearIMUHistory: () => set({ imuHistory: { accel: [], gyro: [] } }),
 
-  togglePointCloud: async (deviceId?: string) => {
-    const state = get()
-    // Fall back to the first active device when caller passes no id.
-    const targetDeviceId = deviceId || Object.values(state.deviceStates).find(ds => ds.isActive)?.device.device_id
-    if (!targetDeviceId) return
-
-    const deviceState = state.deviceStates[targetDeviceId]
-    if (!deviceState) return
-
-    // Check if point cloud is currently enabled by looking at vertices
-    const hasPointCloud = deviceState.streamMetadata?.['depth']?.point_cloud !== undefined
-
-    try {
-      if (hasPointCloud) {
-        await apiClient.disablePointCloud(targetDeviceId)
-      } else {
-        await apiClient.enablePointCloud(targetDeviceId)
-      }
-    } catch (error) {
-      set({
-        error: `Failed to toggle point cloud: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      })
-    }
-  },
-
-  setPointCloudVertices: (deviceIdOrVertices: string | Float32Array | null, vertices?: Float32Array | null) => {
-    // Legacy support: if first arg is Float32Array or null, use it directly
-    if (typeof deviceIdOrVertices !== 'string') {
-      set({ pointCloudVertices: deviceIdOrVertices })
-      return
-    }
-    // New signature: deviceId, vertices - store globally for now
-    set({ pointCloudVertices: vertices || null })
-  },
-
   // UI state
   viewMode: '2d',
   setViewMode: async (mode) => {
@@ -1072,8 +834,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
       })
     }
   },
-  isIMUViewerExpanded: false,
-  toggleIMUViewer: () => set((state) => ({ isIMUViewerExpanded: !state.isIMUViewerExpanded })),
 
   // Chat/AI Assistant state
   isChatOpen: false,
@@ -1182,7 +942,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
                 enable: proposedConfig.enable,
               }
             }
-            return existingConfig
+            return { ...existingConfig, enable: false }
           })
           
           return {
@@ -1222,9 +982,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
         if (enabledConfigs.length === 0) {
           throw new Error('No streams enabled. Please configure at least one stream before starting.')
         }
-        await get().startDeviceStreaming(deviceId)
+        for (const sensorId of new Set(enabledConfigs.map(c => c.sensor_id))) {
+          await get().startSensorStreaming(deviceId, sensorId)
+        }
       } else if (settings.streamAction === 'stop') {
-        await get().stopDeviceStreaming(deviceId)
+        const status = get().deviceStates[deviceId]?.sensorStreamingStatus || {}
+        for (const [sensorId, ss] of Object.entries(status)) {
+          if (ss.is_streaming) await get().stopSensorStreaming(deviceId, sensorId)
+        }
       }
       
       // Clear pending settings
@@ -1271,19 +1036,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
   error: null,
   setError: (error) => set({ error }),
   clearError: () => set({ error: null }),
-
-  get isStreaming() {
-    const state = get()
-    // Return true if any device is streaming
-    return Object.values(state.deviceStates).some(ds => ds.isStreaming)
-  },
-
-  get isPointCloudEnabled() {
-    const state = get()
-    return Object.values(state.deviceStates).some(
-      ds => ds.streamMetadata?.['depth']?.point_cloud !== undefined,
-    )
-  },
 
   pointCloudVertices: null,
   pointCloudColors: null,

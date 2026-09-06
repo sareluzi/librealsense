@@ -354,8 +354,9 @@ namespace librealsense
             if (pHeader->MembersCount < 1)
                 throw std::exception("no data ksprop");
 
-            // The data fields are up to four bytes
-            auto field_width = std::min(sizeof(uint32_t), (size_t)length);
+            // Each KS reply entry is exactly `length` bytes wide - the old 4-byte cap was correct
+            // for scalar PU/CT controls (length <=4 there) but silently truncated multi-field
+            // composite XU controls (e.g. rs2_hdrd_control's 38 bytes) to their first 4 bytes.
             auto option_range_size = std::max(sizeof(uint32_t), (size_t)length);
             switch (pHeader->MembersFlags)
             {
@@ -363,20 +364,24 @@ namespace librealsense
             case KSPROPERTY_MEMBER_RANGES:
             case KSPROPERTY_MEMBER_STEPPEDRANGES:
             {
-                if (pDesc->DescriptionSize < sizeof(KSPROPERTY_DESCRIPTION) + sizeof(KSPROPERTY_MEMBERSHEADER) + 3 * sizeof(UCHAR))
+                // Must cover the two fixed headers PLUS the 3 variable-length entries (step, min,
+                // max), not just 3 placeholder bytes - else a short/malformed reply would let
+                // the memcpy calls below read past the end of the real reply.
+                if (pDesc->DescriptionSize < sizeof(KSPROPERTY_DESCRIPTION) + sizeof(KSPROPERTY_MEMBERSHEADER)
+                                                 + 3 * static_cast<size_t>(length))
                 {
                     throw std::exception("no data ksprop");
                 }
 
                 auto pStruct = next_struct;
                 cfg.step.resize(option_range_size);
-                std::memcpy( cfg.step.data(), pStruct, field_width );
+                std::memcpy( cfg.step.data(), pStruct, length );
                 pStruct += length;
                 cfg.min.resize(option_range_size);
-                std::memcpy( cfg.min.data(), pStruct, field_width );
+                std::memcpy( cfg.min.data(), pStruct, length );
                 pStruct += length;
                 cfg.max.resize(option_range_size);
-                std::memcpy( cfg.max.data(), pStruct, field_width );
+                std::memcpy( cfg.max.data(), pStruct, length );
                 return;
             }
             case KSPROPERTY_MEMBER_VALUES:
@@ -388,13 +393,16 @@ namespace librealsense
 
                 if (pHeader->Flags == KSPROPERTY_MEMBER_FLAG_DEFAULT && pHeader->MembersCount == 1)
                 {
-                    if (pDesc->DescriptionSize < sizeof(KSPROPERTY_DESCRIPTION) + sizeof(KSPROPERTY_MEMBERSHEADER) + sizeof(UCHAR))
+                    // Same reasoning as the RANGES case above - must cover the single variable-
+                    // length `def` entry, not a placeholder byte.
+                    if (pDesc->DescriptionSize < sizeof(KSPROPERTY_DESCRIPTION) + sizeof(KSPROPERTY_MEMBERSHEADER)
+                                                     + static_cast<size_t>(length))
                     {
                         throw std::exception("no data ksprop");
                     }
 
                     cfg.def.resize(option_range_size);
-                    std::memcpy( cfg.def.data(), next_struct, field_width );
+                    std::memcpy( cfg.def.data(), next_struct, length );
                 }
                 return;
             }
@@ -1021,10 +1029,19 @@ namespace librealsense
                         continue;
                     }
 
-                    // On D585S, we need to distinguish the occupancy and the label point cloud streams.
-                    // The condition currently support 3 resolutions for LPC
-                    // This needs to be refactored!
-                    if (this->_info.pid == 0x0b6b && width == 2880 && (height == 1040 || height == 260 || height == 32))
+                    // The device reports GREY for both mapping streams, so the labeled point
+                    // cloud is re-tagged here to keep them apart. Two layouts: D585S / D585
+                    // legacy (0x0b6b / 0x0b6a) carry them on MI 13 at 2880-wide payloads; every
+                    // other D5xx carries them on MI 11 with LPCL at 640x360. The MI test
+                    // matters -- 640x360 GREY also exists on the depth interface as infrared.
+                    const bool d585s_layout = ( this->_info.pid == 0x0b6b || this->_info.pid == 0x0b6a )
+                                           && width == 2880
+                                           && ( height == 1040 || height == 260 || height == 32 );
+                    const bool d5xx_mapping_layout = ( this->_info.pid == 0x0b56
+                                                     || ( this->_info.pid >= 0x0c01 && this->_info.pid <= 0x0c08 ) )
+                                                  && ( this->_info.mi == 11 )
+                                                  && width == 640 && height == 360;
+                    if (d585s_layout || d5xx_mapping_layout)
                     {
                         device_fourcc = 0x50414C38; // PAL8 used instead of FGREY in order to distinguish  between occupancy and point cloud streams
                     }

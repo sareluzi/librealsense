@@ -25,8 +25,11 @@
 
 #include <imgui_internal.h>
 
+#include "rum-uploader/rum-uploader.h"
+
 using namespace rs2;
 using namespace rs400;
+
 
 
 void update_viewer_configuration(viewer_model& viewer_model)
@@ -388,11 +391,17 @@ int run_viewer( int argc, const char ** argv,
     if( on_setup )
         on_setup( *device_models, viewer_model );
 
+    // Its destructor joins the boot-upload worker on any exit from run_viewer (normal return or an
+    // exception out of the render loop), so the thread is never left running after shutdown.
+    rs2::rum_uploader rum_boot;
+
     // Closing the window
     while (window)
     {
         refresh_devices(m, ctx, devices_connection_changes, connected_devs,
             device_names, *device_models, viewer_model, error_message);
+
+        rum_boot.upload_data(window);
 
         auto output_height = viewer_model.get_output_height();
 
@@ -674,6 +683,8 @@ int run_viewer( int argc, const char ** argv,
             if (sub->streaming)
                 sub->stop(viewer_model.not_model);
         }
+
+    rs2::rum_uploader::join_pending_stops(device_models);
 
     return EXIT_SUCCESS;
 }

@@ -24,6 +24,10 @@ extern "C" {
 #include "h/rs_sensor.h"
 #include "h/rs_safety_sensor.h"
 #include "h/rs_eth_config.h"
+#include "h/rs_rum.h"
+#include "h/rs_composite_option.h"
+#include "h/rs_temporal_filter_dpp.h"
+#include "h/rs_hdrd_control.h"
 
 #define RS2_API_MAJOR_VERSION    2
 #define RS2_API_MINOR_VERSION    58
@@ -38,7 +42,6 @@ extern "C" {
 #endif
 
 /* Versioning rules            : For each release at least one of [MJR/MNR/PTCH] triple is promoted                                             */
-/*                             : Versions that differ by RS2_API_PATCH_VERSION only are interface-compatible, i.e. no user-code changes required */
 /*                             : Versions that differ by MAJOR/MINOR VERSION component can introduce API changes                                */
 /* Version in encoded integer format (1,9,x) -> 01090x. note that each component is limited into [0-99] range by design                         */
 #define RS2_API_VERSION  (((RS2_API_MAJOR_VERSION) * 10000) + ((RS2_API_MINOR_VERSION) * 100) + (RS2_API_PATCH_VERSION))

@@ -5,6 +5,10 @@
 #include <librealsense2/rs.hpp>
 #include <rs-config.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
 #include <third-party/filesystem/glob.h>
 
 #include <imgui.h>
@@ -322,24 +326,33 @@ namespace rs2
 
         auto path = rsutils::os::get_special_folder( rsutils::os::special_folder::user_documents );
         path += "librealsense2/presets/";
-        try
+        // glob_rec() throws whenever opendir() fails - the common case here (most machines never
+        // created this folder). Check first to avoid a first-chance throw/catch on every refresh.
+        if( isDir( path, nullptr ) )
         {
-            std::string name = dev.get_info(RS2_CAMERA_INFO_NAME);
-            std::smatch match;
-            if( ! std::regex_search( name, match, std::regex( "^RealSense (\\S+)" ) ) )
-                throw std::runtime_error( "cannot parse device name from '" + name + "'" );
+            try
+            {
+                std::string name = dev.get_info(RS2_CAMERA_INFO_NAME);
+                std::smatch match;
+                if( ! std::regex_search( name, match, std::regex( "^RealSense (\\S+)" ) ) )
+                    throw std::runtime_error( "cannot parse device name from '" + name + "'" );
 
-            glob(
-                path,
-                std::string( match[1] ) + " *.preset",
-                [&]( std::string const & file ) {
-                    advanced_mode_settings_file_names.insert( path + file );
-                },
-                false );  // recursive
+                glob(
+                    path,
+                    std::string( match[1] ) + " *.preset",
+                    [&]( std::string const & file ) {
+                        advanced_mode_settings_file_names.insert( path + file );
+                    },
+                    false );  // recursive
+            }
+            catch( const std::exception & e )
+            {
+                LOG_WARNING( "Exception caught trying to detect presets: " << e.what() );
+            }
         }
-        catch( const std::exception & e )
+        else
         {
-            LOG_WARNING( "Exception caught trying to detect presets: " << e.what() );
+            LOG_INFO( "Presets folder not found under " << path << ", skipping detection");
         }
     }
 
@@ -2871,6 +2884,80 @@ namespace rs2
                     }
                 }
 
+                // Temporal Filter DPP "structured API" panel. Only rendered when the sensor
+                // exposes RS2_COMPOSITE_OPTION_TEMPORAL_FILTER_DPP - checked via
+                // get_supported_composite_options(), a separate identity space from rs2_option.
+                // All fields are sent together in ONE atomic UVC transaction on "Apply".
+                auto supported_composite_options = sub->s->get_supported_composite_options();
+                bool has_temporal_filter_dpp = std::find(supported_composite_options.begin(),
+                                                          supported_composite_options.end(),
+                                                          RS2_COMPOSITE_OPTION_TEMPORAL_FILTER_DPP)
+                                             != supported_composite_options.end();
+                if (has_temporal_filter_dpp)
+                {
+                    label = rsutils::string::from() << "Temporal Filter DPP (prototype)##" << id;
+                    if (ImGui::TreeNode(label.c_str()))
+                    {
+                        try
+                        {
+                            if (!sub->temporal_filter_dpp_populated)
+                            {
+                                auto bytes = sub->s->get_composite_option(RS2_COMPOSITE_OPTION_TEMPORAL_FILTER_DPP);
+                                if (bytes.size() != sizeof(rs2_temporal_filter_dpp_config))
+                                    throw std::runtime_error("Temporal Filter DPP: unexpected payload size from get_composite_option");
+
+                                rs2_temporal_filter_dpp_config cfg{};
+                                memcpy(&cfg, bytes.data(), sizeof(cfg));
+                                sub->temporal_filter_dpp_enabled = cfg.enabled;
+                                // Wire value is normalized [0,1] scaled into [0,1000] (every DPP
+                                // param slot is an int32 - see rs_temporal_filter_dpp.h) -
+                                // converted back to a plain [0,1] float for the slider below.
+                                sub->temporal_filter_dpp_smooth_alpha = cfg.smooth_alpha / 1000.0f;
+                                sub->temporal_filter_dpp_smooth_delta = cfg.smooth_delta;
+                                sub->temporal_filter_dpp_persistency_index = cfg.persistency_index;
+                                sub->temporal_filter_dpp_populated = true;
+                            }
+
+                            bool enabled_bool = (sub->temporal_filter_dpp_enabled != 0);
+                            label = rsutils::string::from() << "Enabled##temporal_filter_dpp_enabled" << id;
+                            if (ImGui::Checkbox(label.c_str(), &enabled_bool))
+                                sub->temporal_filter_dpp_enabled = enabled_bool ? 1 : 0;
+
+                            label = rsutils::string::from() << "Smooth Alpha##temporal_filter_dpp_alpha" << id;
+                            ImGui::DragFloat(label.c_str(), &sub->temporal_filter_dpp_smooth_alpha, 0.01f, 0.f, 1.f);
+
+                            label = rsutils::string::from() << "Smooth Delta##temporal_filter_dpp_delta" << id;
+                            ImGui::DragInt(label.c_str(), &sub->temporal_filter_dpp_smooth_delta, 1, 1, 100);
+
+                            label = rsutils::string::from() << "Persistency Index##temporal_filter_dpp_persistency" << id;
+                            ImGui::DragInt(label.c_str(), &sub->temporal_filter_dpp_persistency_index, 1, 0, 8);
+
+                            label = rsutils::string::from() << "Send##temporal_filter_dpp_send" << id;
+                            if (ImGui::Button(label.c_str()))
+                            {
+                                rs2_temporal_filter_dpp_config cfg{};
+                                cfg.enabled = sub->temporal_filter_dpp_enabled;
+                                // [0,1] float slider back to the wire's [0,1000] scaled int32 -
+                                // see the matching conversion on read, above.
+                                cfg.smooth_alpha = static_cast<int32_t>( std::lround( sub->temporal_filter_dpp_smooth_alpha * 1000.0f ) );
+                                cfg.smooth_delta = sub->temporal_filter_dpp_smooth_delta;
+                                cfg.persistency_index = sub->temporal_filter_dpp_persistency_index;
+                                sub->s->set_composite_option(RS2_COMPOSITE_OPTION_TEMPORAL_FILTER_DPP, &cfg, sizeof(cfg));
+                            }
+                        }
+                        catch (const error& e)
+                        {
+                            error_message = error_to_string(e);
+                        }
+                        catch (const std::exception& e)
+                        {
+                            error_message = e.what();
+                        }
+
+                        ImGui::TreePop();
+                    }
+                }
+
                 draw_embedded_filters(sub, windows_width, window, viewer,
                     error_message, label, draw_later, update_read_only_options);
 
@@ -3150,7 +3237,7 @@ namespace rs2
 
                     const ImVec2 pos = ImGui::GetCursorPos();
 
-                    draw_later.push_back([windows_width, &window, sub, pos, &viewer, this, pb]() {
+                    draw_later.push_back([windows_width, &window, sub, pos, &viewer, this, pb, &error_message]() {
                         ImGui::SetCursorPos({ windows_width - 42, pos.y - 3 });
 
                         const bool pb_available = pb->is_available();
@@ -3171,6 +3258,14 @@ namespace rs2
                             int font_size = window.get_font_size();
                             const ImVec2 button_size = { font_size * 2.f, font_size * 1.5f };
 
+                            // While this filter's composite editor has a debounced commit pending,
+                            // tint the toggle with the same gold->blue ramp the editor's own
+                            // framed box fades through, so the row header echoes "about to send".
+                            float dirty_progress = 0.0f;
+                            const bool composite_dirty = pb->has_pending_composite_commit(dirty_progress);
+                            ImVec4 dirty_tint = composite_control_dirty_blend(dirty_progress);
+                            dirty_tint.w = 1.0f;   // full opacity for text - the fill's own alpha ramp doesn't apply here
+
                             if (!pb->is_enabled())
                             {
                                 std::string label = rsutils::string::from()
@@ -3178,12 +3273,13 @@ namespace rs2
                                     << sub->s->get_info(RS2_CAMERA_INFO_NAME) << ","
                                     << pb->get_name();
 
-                                ImGui::PushStyleColor(ImGuiCol_Text, redish);
-                                ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, redish + 0.1f);
+                                const ImVec4 text_color = composite_dirty ? dirty_tint : redish;
+                                ImGui::PushStyleColor(ImGuiCol_Text, text_color);
+                                ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, text_color + 0.1f);
 
                                 if (ImGui::Button(label.c_str(), button_size))
                                 {
-                                    pb->enable(true);
+                                    pb->enable(true, &error_message);
                                 }
                                 if (ImGui::IsItemHovered())
                                 {
@@ -3198,12 +3294,13 @@ namespace rs2
                                     << " " << textual_icons::toggle_on << "##" << id << ","
                                     << sub->s->get_info(RS2_CAMERA_INFO_NAME) << ","
                                     << pb->get_name();
-                                ImGui::PushStyleColor(ImGuiCol_Text, light_blue);
-                                ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, light_blue + 0.1f);
+                                const ImVec4 text_color = composite_dirty ? dirty_tint : light_blue;
+                                ImGui::PushStyleColor(ImGuiCol_Text, text_color);
+                                ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, text_color + 0.1f);
 
                                 if (ImGui::Button(label.c_str(), button_size))
                                 {
-                                    pb->enable(false);
+                                    pb->enable(false, &error_message);
                                 }
                                 if (ImGui::IsItemHovered())
                                 {
@@ -3285,8 +3382,7 @@ namespace rs2
     //In order to record LPC and enable 3D we need to also record depth stereo sensor
     bool device_model::is_depth_mapping_camera_streaming_alone()
     {
-        std::string pid = dev.get_info(RS2_CAMERA_INFO_PRODUCT_ID);
-        if (pid == "0B6B")
+        if (device_has_depth_mapping(dev))
         {
             bool depth_mapping_sensor_streaming = false;
             bool depth_stereo_sensor_streaming = false;

@@ -25,6 +25,8 @@
 #include <rsutils/string/from.h>
 #include <rsutils/json.h>
 
+#include "rum/rum-hooks.h"
+
 #include <array>
 #include <set>
 #include <unordered_set>
@@ -633,11 +635,14 @@ void log_callback_end( uint32_t fps,
         }
 
         set_active_streams(requests);
+
+        rum::hooks::on_open( get_device(), requests );
     }
 
     void synthetic_sensor::close()
     {
         std::lock_guard<std::mutex> lock(_synthetic_configure_lock);
+        record_rum_stream_duration();  // closing while still streaming would otherwise drop the interval
         _raw_sensor->close();
 
         std::vector< std::shared_ptr< processing_block > > active_pbs = _formats_converter.get_active_converters();
@@ -658,14 +663,29 @@ void log_callback_end( uint32_t fps,
         set_frames_callback(callback);
         _formats_converter.set_frames_callback( callback );  // TODO duplicate?! Something fishy here!
 
+        record_rum_stream_duration();  // flush any prior interval if start() is called without a stop() between
+
         // Call the processing block on the frame
         _raw_sensor->start(
             make_frame_callback( [&, this]( frame_holder f ) { _formats_converter.convert_frame( f ); } ) );
+
+        _rum_timer.restart( get_device() );
+    }
+
+
+    void sensor_base::record_rum_stream_duration()
+    {
+        // Call before the sensor actually stops/closes/starts, so is_streaming() still reflects
+        // the interval being closed.
+        _rum_timer.record( is_streaming(), get_active_streams() );
     }
 
     void synthetic_sensor::stop()
     {
         std::lock_guard<std::mutex> lock(_synthetic_configure_lock);
+
+        record_rum_stream_duration();
+
         _raw_sensor->stop();
     }
 

@@ -125,6 +125,20 @@ int lockf(int fd, int cmd, off_t length)
 
 namespace librealsense
 {
+    // The UVC interface carrying the D5xx mapping streams (occupancy / labeled point
+    // cloud): MI 13 on D585S, MI 11 on every other D5xx. Their payload is a self-sized
+    // MAP1 frame rather than an image, which both the fourcc split and the frame-size
+    // validation below have to account for.
+    static bool is_d5xx_mapping_interface( uint16_t pid, uint16_t mi )
+    {
+        const bool d5xx = ( pid == 0x0B56 )                      // D555
+                       || ( pid == 0x0B6A ) || ( pid == 0x0B6B ) // D585 legacy / D585S
+                       || ( pid >= 0x0C01 && pid <= 0x0C08 );    // D535 / D585 2C+3C
+        if( ! d5xx )
+            return false;
+        return ( pid == 0x0B6B || pid == 0x0B6A ) ? ( mi == 13 ) : ( mi == 11 );
+    }
+
     namespace platform
     {
         named_mutex::named_mutex(const std::string& device_path, unsigned timeout)
@@ -354,8 +368,14 @@ namespace librealsense
             else
             {
                 //_length += (V4L2_BUF_TYPE_VIDEO_CAPTURE==type) ? MAX_META_DATA_SIZE : 0;
+#ifdef RS2_USE_CUDA_ZEROCOPY
+                // USERPTR: GPU-visible buffer so a zero-copy frame aliasing it stays GPU-resident (as MMAP/RSUSB do).
+                _start = static_cast<uint8_t*>(rs_frame_zc_alloc( _length ));
+                if (!_start) throw linux_backend_exception("rs_frame_zc_alloc for USERPTR buffer failed!");
+#else
                 _start = static_cast<uint8_t*>(malloc( _length));
                 if (!_start) throw linux_backend_exception("User_p allocation failed!");
+#endif
                 memset(_start, 0, _length);
             }
         }
@@ -395,7 +415,11 @@ namespace librealsense
             }
             else
             {
+#ifdef RS2_USE_CUDA_ZEROCOPY
+               rs_frame_zc_free( _start );
+#else
                free(_start);
+#endif
             }
         }
 
@@ -1548,9 +1572,15 @@ namespace librealsense
                         }
 
                         // Relax the required frame size for compressed formats, i.e. MJPG, Z16H
-                        bool compressed_format = val_in_range(_profile.format, { 0x4d4a5047U , 0x5a313648U});
+                        // The D5xx mapping streams need the same relaxation: their descriptor
+                        // advertises the occupancy/point-cloud canvas, while the payload on the
+                        // wire is a MAP1 frame whose length is the data, not width*height*bpp.
+                        // Without this every frame is rejected as incomplete.
+                        bool compressed_format = val_in_range(_profile.format, { 0x4d4a5047U , 0x5a313648U})
+                                              || is_d5xx_mapping_interface( _info.pid, _info.mi );
 
-                        // Compressed and kernel-reported variable-size formats deliver frames shorter than the buffer, so the size check doesn't apply
+                        // Compressed and kernel-reported variable-size formats deliver frames shorter than the buffer,
+                        // so the size check doesn't apply - this covers the perception stream too.
                         bool skip_partial_frame_check = compressed_format || _variable_frame_size;
 
                         // METADATA STREAM
@@ -2142,20 +2172,38 @@ namespace librealsense
                                     static_cast<float>(frame_interval.discrete.denominator) /
                                     static_cast<float>(frame_interval.discrete.numerator);
 
-                                // On D585S, we need to distinguish the occupancy and the label point cloud streams.
-                                // The condition currently support 3 resolutions for LPC
-                                // This needs to be refactored!
-                                if (this->_info.pid == 0X0B6B && frame_size.discrete.width == 2880 && (frame_size.discrete.height == 1040 || frame_size.discrete.height == 260 || frame_size.discrete.height == 32)) // 0x0B6B pid for D585S_PID
+                                // The device reports GREY for both mapping streams, so the
+                                // labeled point cloud is re-tagged here to keep them apart.
+                                // Two layouts: D585S / D585 legacy (0x0B6B / 0x0B6A) carry them
+                                // on MI 13 at 2880-wide payloads; every other D5xx carries them
+                                // on MI 11 with LPCL at 640x360. The MI test matters -- 640x360
+                                // GREY also exists on the depth interface as infrared.
+                                const bool d585s_layout
+                                    = ( this->_info.pid == 0X0B6B || this->_info.pid == 0X0B6A )
+                                   && frame_size.discrete.width == 2880
+                                   && ( frame_size.discrete.height == 1040
+                                     || frame_size.discrete.height == 260
+                                     || frame_size.discrete.height == 32 );
+                                const bool d5xx_mapping_layout
+                                    = ( this->_info.pid != 0X0B6B && this->_info.pid != 0X0B6A )
+                                   && is_d5xx_mapping_interface( this->_info.pid, this->_info.mi )
+                                   && frame_size.discrete.width == 640
+                                   && frame_size.discrete.height == 360;
+                                // Per profile: `fourcc` describes the pixel format and is
+                                // reused for every frame size, so re-tagging it here would
+                                // leak PAL8 onto every later size of the same format.
+                                uint32_t profile_fourcc = fourcc;
+                                if (d585s_layout || d5xx_mapping_layout)
                                 {
-                                    fourcc = 0x50414c38; // PAL8 used instead of GREY in order to distinguish between occupancy and point cloud streams
+                                    profile_fourcc = 0x50414c38; // PAL8 used instead of GREY in order to distinguish between occupancy and point cloud streams
                                 }
 
                                 stream_profile p{};
-                                p.format = fourcc;
+                                p.format = profile_fourcc;
                                 p.width = frame_size.discrete.width;
                                 p.height = frame_size.discrete.height;
                                 p.fps = fps;
-                                if (fourcc != 0) results.push_back(p);
+                                if (profile_fourcc != 0) results.push_back(p);
                             }
                         }
 
@@ -2261,9 +2309,24 @@ namespace librealsense
             }
         }
 
+        static int open_v4l_node( const std::string & name )
+        {
+            auto const deadline = std::chrono::steady_clock::now() + std::chrono::seconds( 5 );
+            int fd, open_errno = 0;
+            // /run/udev/queue exists while udev still has events pending, so a node it has not reached yet
+            // is not really ours to give up on.
+            while( ( fd = open( name.c_str(), O_RDWR | O_NONBLOCK, 0 ) ) < 0  &&  ( open_errno = errno ) == EACCES
+                   &&  ! access( "/run/udev/queue", F_OK )
+                   &&  std::chrono::steady_clock::now() < deadline )
+                std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
+            if( fd < 0 )
+                errno = open_errno;  // access() above may have overwritten what the caller reports
+            return fd;
+        }
+
         void v4l_uvc_device::map_device_descriptor()
         {
-            _fd = open(_name.c_str(), O_RDWR | O_NONBLOCK, 0);
+            _fd = open_v4l_node(_name);
             if(_fd < 0)
                 throw linux_backend_exception(rsutils::string::from() <<__FUNCTION__ << " Cannot open '" << _name);
 
@@ -2515,7 +2578,7 @@ namespace librealsense
             if (_md_fd>0)
                 throw linux_backend_exception(rsutils::string::from() << _md_name << " descriptor is already opened");
 
-            _md_fd = open(_md_name.c_str(), O_RDWR | O_NONBLOCK, 0);
+            _md_fd = open_v4l_node(_md_name);
             if(_md_fd < 0)
             {
                 return;  // Does not throw, MIPI device metadata not received through UVC, no metadata here may be valid
