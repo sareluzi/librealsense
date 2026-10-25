@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hdevelop file_version="1.2" halcon_version="22.11.0.0">
+<procedure name="main">
+<interface/>
+<body>
+<c>* License: Apache 2.0. See LICENSE file in root directory.</c>
+<c>* Copyright(c) 2026 RealSense, Inc. All Rights Reserved.</c>
+<c>*</c>
+<c>* RealSense GenTL producer check in HALCON (GenICamTL interface):</c>
+<c>* enumerate, read features, grab depth, measure fps, build a 3D model from the Scan3d features.</c>
+<c>* Before starting HDevelop, add the folder holding realsense2-gentl.cti to GENICAM_GENTL64_PATH.</c>
+<c>*</c>
+<l>info_framegrabber ('GenICamTL', 'device', Information, DeviceList)</l>
+<l>RealSense := regexp_select(DeviceList, 'RealSense')</l>
+<l>if (|RealSense| == 0)</l>
+<l>    throw ('No RealSense device found, check GENICAM_GENTL64_PATH. Devices: ' + sum(DeviceList + ' | '))</l>
+<l>endif</l>
+<l>open_framegrabber ('GenICamTL', 0, 0, 0, 0, 0, 0, 'progressive', -1, 'default', -1, 'false', 'default', RealSense[0], 0, -1, AcqHandle)</l>
+<l>get_framegrabber_param (AcqHandle, 'DeviceModelName', Model)</l>
+<l>get_framegrabber_param (AcqHandle, 'DeviceSerialNumber', Serial)</l>
+<c></c>
+<c>* Spike S1: which data stream did HALCON open, and how can the others be reached?</c>
+<l>get_framegrabber_param (AcqHandle, 'available_param_names', ParamNames)</l>
+<l>StreamParams := regexp_select(ParamNames, '(?i)stream')</l>
+<c></c>
+<l>set_framegrabber_param (AcqHandle, 'ComponentSelector', 'Range')</l>
+<l>get_framegrabber_param (AcqHandle, 'PixelFormat', PixelFormat)</l>
+<l>get_framegrabber_param (AcqHandle, 'Width', Width)</l>
+<l>get_framegrabber_param (AcqHandle, 'Height', Height)</l>
+<l>get_framegrabber_param (AcqHandle, 'Scan3dFocalLength', F)</l>
+<l>get_framegrabber_param (AcqHandle, 'Scan3dPrincipalPointU', U0)</l>
+<l>get_framegrabber_param (AcqHandle, 'Scan3dPrincipalPointV', V0)</l>
+<l>get_framegrabber_param (AcqHandle, 'Scan3dCoordinateScale', Scale)</l>
+<c></c>
+<c>* Grab: the first frames include sensor start-up, so time only the later ones</c>
+<l>grab_image_start (AcqHandle, -1)</l>
+<l>for I := 1 to 15 by 1</l>
+<l>    grab_image_async (Image, AcqHandle, -1)</l>
+<l>endfor</l>
+<l>NumFrames := 90</l>
+<l>count_seconds (T0)</l>
+<l>for I := 1 to NumFrames by 1</l>
+<l>    grab_image_async (Image, AcqHandle, -1)</l>
+<l>endfor</l>
+<l>count_seconds (T1)</l>
+<l>Fps := NumFrames / (T1 - T0)</l>
+<l>get_image_type (Image, ImageType)</l>
+<c></c>
+<c>* Point cloud from Scan3d features: Z = value * Scale [mm], X = (u - U0) * Z / F, Y = (v - V0) * Z / F</c>
+<l>convert_image_type (Image, ImageReal, 'real')</l>
+<l>scale_image (ImageReal, Z, Scale, 0)</l>
+<l>get_image_size (Z, W, H)</l>
+<l>gen_image_surface_first_order (U, 'real', 0, 1, -U0, 0, 0, W, H)</l>
+<l>gen_image_surface_first_order (V, 'real', 1, 0, -V0, 0, 0, W, H)</l>
+<l>mult_image (U, Z, X, 1.0 / F, 0)</l>
+<l>mult_image (V, Z, Y, 1.0 / F, 0)</l>
+<l>threshold (Z, Valid, 1, 100000)</l>
+<l>reduce_domain (X, Valid, XValid)</l>
+<l>reduce_domain (Y, Valid, YValid)</l>
+<l>reduce_domain (Z, Valid, ZValid)</l>
+<l>xyz_to_object_model_3d (XValid, YValid, ZValid, ObjectModel3D)</l>
+<l>get_object_model_3d_params (ObjectModel3D, 'num_points', NumPoints)</l>
+<l>get_grayval (Image, H / 2, W / 2, CenterValue)</l>
+<l>CenterZ := CenterValue * Scale</l>
+<c></c>
+<l>close_framegrabber (AcqHandle)</l>
+<l>Result := Model + ' ' + Serial + ': ' + PixelFormat + ' ' + Width + 'x' + Height + ' ' + ImageType + ', ' + Fps$'.1f' + ' fps, ' + NumPoints + ' points, center ' + CenterZ$'.0f' + ' mm'</l>
+<l>dev_get_window (WindowHandle)</l>
+<l>dev_display (Image)</l>
+<l>disp_message (WindowHandle, Result, 'window', 12, 12, 'black', 'true')</l>
+<l>disp_message (WindowHandle, 'Stream parameters: ' + sum(StreamParams + ' '), 'window', 40, 12, 'black', 'true')</l>
+<l>stop ()</l>
+</body>
+<docu id="main">
+<parameters/>
+</docu>
+</procedure>
+</hdevelop>

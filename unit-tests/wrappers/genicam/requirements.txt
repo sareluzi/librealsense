@@ -1,0 +1,3 @@
+# Test-only extras for pytest-gentl-producer.py (GenTL consumer used to drive realsense2-gentl.cti)
+# Usage: pip install -r unit-tests/wrappers/genicam/requirements.txt
+harvesters==1.4.2
