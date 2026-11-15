@@ -20,6 +20,7 @@ from app.models.stream import PointCloudStatus, StreamConfig, StreamStatus
 import socketio
 
 from app.services.metadata_socket_server import MetadataSocketServer
+from app.services.person_analytics import PersonAnalytics
 from app.services import firmware as fw
 
 
@@ -114,6 +115,7 @@ class RealSenseManager:
 
         self.sio = sio
         self.metadata_socket_server = MetadataSocketServer(sio, self)
+        self.person_analytics = PersonAnalytics(self._emit_socket_event)
 
         # --- Per-Sensor Streaming State (Sensor API) ---
         # Tracks which mode each device is using: "pipeline", "sensor", or "idle"
@@ -1657,6 +1659,13 @@ class RealSenseManager:
                                     }
                                     # Placeholder frame; viewers draw motion from metadata["motion_data"]
                                     frame = np.zeros((120, 320, 3), dtype=np.uint8)
+                            elif rs_stream == rs.stream.object_detection:
+                                # Results go out as Socket.IO events; there is no image to queue
+                                od = next((f for f in frames if f.get_profile().stream_type() == rs_stream), None)
+                                if od:
+                                    self.person_analytics.on_od_frame(
+                                        device_id, od.as_object_detection_frame(), frames.get_color_frame() or None)
+                                continue
                             else:
                                 continue  # Unknown stream type
 
@@ -1891,6 +1900,12 @@ class RealSenseManager:
                 "z": float(motion_data.z),
             }
             processed_frame = np.zeros((120, 320, 3), dtype=np.uint8)
+
+        elif stream == rs.stream.object_detection:
+            # Results go out as Socket.IO events; no image, so the collector queues nothing
+            color = self._pick_color_for_depth(device_id, frame) if self._is_color_streaming(device_id) else None
+            self.person_analytics.on_od_frame(device_id, frame.as_object_detection_frame(), color)
+            return None, metadata
 
         metadata.update(self._build_viewer_info(info_source))
         return processed_frame, metadata

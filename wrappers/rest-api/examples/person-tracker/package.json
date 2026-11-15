@@ -1,0 +1,17 @@
+{
+  "name": "person-tracker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build --logLevel warn"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.2.2",
+    "vite": "^4.5.0"
+  }
+}

@@ -139,6 +139,32 @@ For a modern web-based UI to interact with RealSense devices:
 
 For more details about the React viewer features and development, see `tools/react-viewer/README.md`.
 
+### Person Tracker sample
+
+`examples/person-tracker` is a small web app built on this API for cameras with on-camera person
+detection (e.g. D585). It shows the color stream, keeps detected persons sharp and blurs the rest,
+colors each box by distance and shows count / min / max / average distance. Each layer has a toggle.
+
+```bash
+cd examples/person-tracker && npm install && npm run build
+```
+
+The server serves the build at `http://localhost:8000/samples/person-tracker/` (restart it after
+the first build). The page starts color + `object_detection` with `POST /devices/{id}/stream/start`,
+plays color over WebRTC and draws the server's `person_detections` Socket.IO events, sent once per
+detection frame:
+
+```json
+{ "device_id": "...", "od_frame_number": 165, "color_frame_number": 230,
+  "image": {"width": 1280, "height": 960},
+  "persons": [{"bbox": [688, 314, 993, 693], "score": 85, "distance_m": 1.26, "world": [0.55, -0.23, 1.11]}],
+  "stats": {"count": 1, "min_m": 1.26, "max_m": 1.26, "avg_m": 1.26} }
+```
+
+Boxes are in color-image pixels. `world` is the camera-frame position in meters, `null` when the
+camera reports none. The server keeps persons only and drops overlapping boxes the same way
+realsense-viewer does. Tune that with `GET/PUT /devices/{id}/person-analytics/config`.
+
 ### Running Tests
 
 The `run_tests.py` helper at the rest-api root runs both the backend pytest suite and the React viewer Vitest suite:

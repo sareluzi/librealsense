@@ -4,7 +4,7 @@
 from typing import List
 
 from fastapi import APIRouter
-from app.api.endpoints import advanced_mode, colorizer, devices, filters, firmware, hwm, options, point_cloud, sensors, streams, system, webrtc
+from app.api.endpoints import advanced_mode, colorizer, devices, filters, firmware, hwm, options, person_analytics, point_cloud, sensors, streams, system, webrtc
 
 
 def _get_sdk_version() -> str:
@@ -94,6 +94,7 @@ api_router.include_router(hwm.router, prefix="/devices/{device_id}/hwm", tags=["
 api_router.include_router(point_cloud.router, prefix="/devices/{device_id}/point_cloud", tags=["point_cloud"])
 api_router.include_router(sensors.router, prefix="/devices/{device_id}/sensors", tags=["sensors"])
 api_router.include_router(options.router, prefix="/devices/{device_id}/sensors/{sensor_id}/options", tags=["options"])
+api_router.include_router(person_analytics.router, prefix="/devices/{device_id}/person-analytics", tags=["person_analytics"])
 api_router.include_router(streams.router, prefix="/devices/{device_id}/stream", tags=["streams"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(webrtc.router, prefix="/webrtc", tags=["webrtc"])

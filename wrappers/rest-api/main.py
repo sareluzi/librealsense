@@ -96,6 +96,10 @@ _static_dir = Path(__file__).parent / "static"
 if (_static_dir / "index.html").exists():
     app.router.default = StaticFiles(directory=_static_dir, html=True)
 
+# Sample apps, once built (npm run build in examples/<name>)
+for _sample in (Path(__file__).parent / "examples").glob("*/dist"):
+    app.mount(f"/samples/{_sample.parent.name}", StaticFiles(directory=_sample, html=True), name=_sample.parent.name)
+
 
 @app.on_event("startup")
 async def startup_event():

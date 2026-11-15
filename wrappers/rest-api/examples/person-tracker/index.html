@@ -1,0 +1,63 @@
+<!-- License: Apache 2.0. See LICENSE file in root directory. -->
+<!-- Copyright(c) 2026 RealSense, Inc. All Rights Reserved. -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <title>Person Tracker</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <img class="logo" src="realsense-logo.png" alt="RealSense" />
+      <span class="divider"></span>
+      <h1>Person Tracker</h1>
+      <div id="status" class="pill" data-state="idle"><span class="dot"></span><span id="status-text">Idle</span></div>
+    </header>
+
+    <div class="layout">
+      <aside class="panel" aria-label="Controls">
+        <section>
+          <h2><i data-icon="video"></i>Camera</h2>
+          <div class="camera">
+            <button id="start" class="start" aria-label="Start streaming" title="Start streaming">
+              <i data-icon="play" data-size="22"></i>
+            </button>
+            <div class="camera-info">
+              <div id="device-name">No camera</div>
+              <div id="device-detail" class="muted">Press play to find a camera with person detection</div>
+            </div>
+          </div>
+          <div id="error" class="error" hidden></div>
+        </section>
+
+        <section>
+          <h2><i data-icon="layers"></i>Layers</h2>
+          <button class="toggle" data-toggle="blur"><i data-icon="blur"></i><span>Privacy blur</span><span class="switch"></span></button>
+          <button class="toggle" data-toggle="boxes"><i data-icon="boxes"></i><span>Person boxes</span><span class="switch"></span></button>
+          <button class="toggle" data-toggle="stats"><i data-icon="stats"></i><span>Distance stats</span><span class="switch"></span></button>
+        </section>
+
+        <section>
+          <h2><i data-icon="ruler"></i>Box color by distance</h2>
+          <div id="legend" class="legend"></div>
+        </section>
+      </aside>
+
+      <main class="stage">
+        <div id="stats" class="stats"></div>
+        <div class="viewport">
+          <canvas id="canvas" width="1280" height="720" hidden></canvas>
+          <div id="placeholder" class="placeholder">
+            <i data-icon="videoOff" data-size="48"></i>
+            <p>Not streaming</p>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <video id="video" muted playsinline hidden></video>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
