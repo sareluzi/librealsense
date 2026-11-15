@@ -37,6 +37,13 @@
           <button class="toggle" data-toggle="blur"><i data-icon="blur"></i><span>Privacy blur</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="boxes"><i data-icon="boxes"></i><span>Person boxes</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="stats"><i data-icon="stats"></i><span>Distance stats</span><span class="switch"></span></button>
+          <button class="toggle" data-toggle="tracking"><i data-icon="tracking"></i><span>Tracking &amp; names</span><span class="switch"></span></button>
+        </section>
+
+        <section>
+          <h2><i data-icon="users"></i>People <span id="people-count" class="count"></span></h2>
+          <p id="people-hint" class="muted hint" hidden>Click a person's box to name them.</p>
+          <ul id="people" class="people"></ul>
         </section>
 
         <section>
@@ -49,6 +56,16 @@
         <div id="stats" class="stats"></div>
         <div class="viewport">
           <canvas id="canvas" width="1280" height="720" hidden></canvas>
+          <form id="tagger" class="tagger" hidden>
+            <label for="tag-name"><i data-icon="tag" data-size="16"></i><span id="tag-title">Name this person</span></label>
+            <input id="tag-name" list="known-names" maxlength="64" placeholder="Name or ID" autocomplete="off" />
+            <datalist id="known-names"></datalist>
+            <div class="tagger-actions">
+              <button type="button" id="tag-remove" class="icon-btn" title="Remove name" aria-label="Remove name"><i data-icon="trash" data-size="16"></i></button>
+              <button type="button" id="tag-cancel" class="icon-btn" title="Cancel" aria-label="Cancel"><i data-icon="x" data-size="16"></i></button>
+              <button type="submit" class="save"><i data-icon="check" data-size="16"></i>Save</button>
+            </div>
+          </form>
           <div id="placeholder" class="placeholder">
             <i data-icon="videoOff" data-size="48"></i>
             <p>Not streaming</p>

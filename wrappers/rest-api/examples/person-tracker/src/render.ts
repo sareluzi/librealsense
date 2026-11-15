@@ -23,6 +23,29 @@ export const UNKNOWN_COLOR = '#8e8e93'
 export const distanceColor = (d: number | null) =>
   d === null ? UNKNOWN_COLOR : DISTANCE_BANDS.find(([max]) => d < max)![1]
 
+// A stable color per identity: by name when named (so it survives restarts), else by track ID
+const IDENTITY_COLORS = ['#bf5af2', '#64d2ff', '#ff375f', '#30d158', '#ffd60a', '#ff9f0a', '#5e5ce6', '#ac8e68']
+export function identityColor(name: string | null, trackId: number) {
+  const key = name ?? String(trackId)
+  let h = 0
+  for (const c of key) h = (h * 31 + c.charCodeAt(0)) >>> 0
+  return IDENTITY_COLORS[h % IDENTITY_COLORS.length]
+}
+
+/** Who a person is, for labels: their name, `#id`, or null while unconfirmed or untracked. */
+export const who = (p: Person) => (p.track_id === null ? null : (p.name ?? `#${p.track_id}`))
+
+/** The person under canvas pixel (x, y), the smallest box if several overlap. */
+export function personAt(persons: Person[], image: { width: number; height: number }, canvas: HTMLCanvasElement,
+                         x: number, y: number): Person | null {
+  const ix = (x * image.width) / canvas.width
+  const iy = (y * image.height) / canvas.height
+  const area = (p: Person) => (p.bbox[2] - p.bbox[0]) * (p.bbox[3] - p.bbox[1])
+  return persons
+    .filter((p) => ix >= p.bbox[0] && ix <= p.bbox[2] && iy >= p.bbox[1] && iy <= p.bbox[3])
+    .sort((a, b) => area(a) - area(b))[0] ?? null
+}
+
 // The blur is a heavy downscale then a smooth upscale: cheap at any resolution
 const BLUR_DOWNSCALE = 16
 const small = document.createElement('canvas')
@@ -73,12 +96,27 @@ export function drawFrame(
     const color = distanceColor(p.distance_m)
     ctx.strokeStyle = color
     ctx.strokeRect(x, y, w, h)
-    const label = `${p.distance_m === null ? '?' : p.distance_m.toFixed(2) + ' m'} · ${p.score}%`
-    const tw = ctx.measureText(label).width + 10
+    const name = who(p)
+    const label = [name, p.distance_m === null ? '?' : p.distance_m.toFixed(2) + ' m', `${p.score}%`]
+      .filter(Boolean)
+      .join(' · ')
+    const dot = name ? font * 0.8 : 0 // identity color dot before the text
+    const tw = ctx.measureText(label).width + 10 + (dot && dot + 6)
     const ty = y >= font + 6 ? y - font - 6 : y // above the box, or inside it at the top edge
+    const lx = Math.max(0, Math.min(x, width - tw)) // kept inside the frame
     ctx.fillStyle = color
-    ctx.fillRect(x, ty, tw, font + 6)
+    ctx.fillRect(lx, ty, tw, font + 6)
+    if (dot) {
+      ctx.beginPath()
+      ctx.arc(lx + 5 + dot / 2, ty + (font + 6) / 2, dot / 2, 0, 2 * Math.PI)
+      ctx.fillStyle = identityColor(p.name, p.track_id!)
+      ctx.fill()
+      ctx.strokeStyle = '#000'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+      ctx.lineWidth = Math.max(2, height / 240)
+    }
     ctx.fillStyle = '#000'
-    ctx.fillText(label, x + 5, ty + font)
+    ctx.fillText(label, lx + 5 + (dot && dot + 6), ty + font)
   })
 }

@@ -143,7 +143,9 @@ For more details about the React viewer features and development, see `tools/rea
 
 `examples/person-tracker` is a small web app built on this API for cameras with on-camera person
 detection (e.g. D585). It shows the color stream, keeps detected persons sharp and blurs the rest,
-colors each box by distance and shows count / min / max / average distance. Each layer has a toggle.
+colors each box by distance and shows count / min / max / average distance. The server also tracks
+each person, so clicking a box names that person and the name follows them, even after they leave
+and come back. Each layer has a toggle.
 
 ```bash
 cd examples/person-tracker && npm install && npm run build
@@ -157,13 +159,22 @@ detection frame:
 ```json
 { "device_id": "...", "od_frame_number": 165, "color_frame_number": 230,
   "image": {"width": 1280, "height": 960},
-  "persons": [{"bbox": [688, 314, 993, 693], "score": 85, "distance_m": 1.26, "world": [0.55, -0.23, 1.11]}],
+  "persons": [{"bbox": [688, 314, 993, 693], "score": 85, "distance_m": 1.26, "world": [0.55, -0.23, 1.11],
+               "track_id": 4, "name": "Alice"}],
   "stats": {"count": 1, "min_m": 1.26, "max_m": 1.26, "avg_m": 1.26} }
 ```
 
 Boxes are in color-image pixels. `world` is the camera-frame position in meters, `null` when the
 camera reports none. The server keeps persons only and drops overlapping boxes the same way
 realsense-viewer does. Tune that with `GET/PUT /devices/{id}/person-analytics/config`.
+
+Tracking (`"tracking": true` in that config, the default) matches each detection to a person by
+box overlap, 3D position and clothing color. `track_id` is `null` until a person has been seen for a
+few frames. Name a person with `PUT /devices/{id}/person-analytics/tracks/{track_id}` and
+`{"name": "Alice"}` (`null` removes it). `GET .../tracks` lists who is here and who was seen recently.
+Named persons' clothing colors are saved in `~/.realsense/person-tracker-identities.json`, so they
+are recognized again after a restart. List and forget them with `GET .../identities` and
+`DELETE .../identities/{name}`. Clothing color only tells apart people who dress differently.
 
 ### Running Tests
 

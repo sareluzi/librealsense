@@ -6,6 +6,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import pyrealsense2 as rs
 from fastapi.testclient import TestClient
@@ -58,6 +59,9 @@ class _ColorFrame:
     def get_frame_number(self):
         return self.n
 
+    def get_data(self):
+        return np.zeros((self.h, self.w, 3), np.uint8)
+
 
 def test_read_persons_keeps_class_0_and_maps_invalid_depth_to_none():
     persons = read_persons(_OdFrame([_det([0, 0, 10, 10]), _det([5, 5, 9, 9], class_id=1),
@@ -99,6 +103,7 @@ def test_on_od_frame_emits_payload_and_remembers_image_size():
     assert payload["image"] == {"width": 1280, "height": 720}
     assert payload["color_frame_number"] == 55 and payload["od_frame_number"] == 7
     assert payload["stats"]["count"] == 1
+    assert payload["persons"][0]["track_id"] is None  # tracked, not confirmed yet
     # An OD frame without a matching color frame keeps the last known size for box scaling
     assert pa.on_od_frame("dev", _OdFrame([], frame_number=8), None)["image"] == {"width": 1280, "height": 720}
 
@@ -129,7 +134,31 @@ def test_config_endpoint_round_trip(monkeypatch):
     monkeypatch.setattr(dependencies, "_realsense_manager", mgr)
     client = TestClient(app)
     url = "/api/v1/devices/dev/person-analytics/config"
-    assert client.get(url).json() == {"nms_score": 45, "nms_iou": 0.55}
-    assert client.put(url, json={"nms_score": 60, "nms_iou": 0.4}).json() == {"nms_score": 60, "nms_iou": 0.4}
-    assert client.get(url).json() == {"nms_score": 60, "nms_iou": 0.4}
+    assert client.get(url).json() == {"nms_score": 45, "nms_iou": 0.55, "tracking": True}
+    new = {"nms_score": 60, "nms_iou": 0.4, "tracking": False}
+    assert client.put(url, json=new).json() == new
+    assert client.get(url).json() == new
     assert client.put(url, json={"nms_score": 101, "nms_iou": 0.4}).status_code == 422
+
+
+def test_tracking_endpoints(monkeypatch, tmp_path):
+    from main import app
+    import app.api.dependencies as dependencies
+    from app.services.person_analytics import PersonAnalytics
+    mgr = RealSenseManager(MagicMock())
+    mgr.get_device = MagicMock()
+    mgr.person_analytics = PersonAnalytics(MagicMock(), tmp_path / "ids.json")
+    monkeypatch.setattr(dependencies, "_realsense_manager", mgr)
+    client = TestClient(app)
+    for n in range(5):
+        mgr.person_analytics.on_od_frame("dev", _OdFrame([_det([10, 10, 100, 300])], frame_number=n), _ColorFrame())
+    url = "/api/v1/devices/dev/person-analytics"
+    tracks = client.get(f"{url}/tracks").json()
+    assert [t["present"] for t in tracks] == [True]
+    tid = tracks[0]["track_id"]
+    assert client.put(f"{url}/tracks/{tid}", json={"name": " Alice "}).json()[0]["name"] == "Alice"
+    assert client.get(f"{url}/identities").json() == ["Alice"]
+    assert client.put(f"{url}/tracks/999", json={"name": "X"}).status_code == 404
+    assert client.delete(f"{url}/identities/Alice").status_code == 200
+    assert client.get(f"{url}/identities").json() == []
+    assert client.delete(f"{url}/identities/Alice").status_code == 404

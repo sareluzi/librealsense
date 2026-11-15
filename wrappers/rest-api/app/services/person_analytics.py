@@ -4,27 +4,22 @@
 """Turns on-camera object detection frames into per-person results for clients.
 
 Each OD frame yields one Socket.IO ``person_detections`` event: persons only, after the same
-non-maximum suppression the C++ viewer applies, with distance stats.
+non-maximum suppression the C++ viewer applies, with distance stats and, with tracking on, the
+track ID and name of each person (see person_tracker).
 """
 
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+import numpy as np
+
 from app.models.person_analytics import PersonAnalyticsConfig
+from app.services.person_tracker import IdentityStore, PersonTracker, appearance, iou
 
 PERSON_CLASS_ID = 0
 EVENT_NAME = "person_detections"
-
-
-def _iou(a: List[int], b: List[int]) -> float:
-    w = min(a[2], b[2]) - max(a[0], b[0])
-    h = min(a[3], b[3]) - max(a[1], b[1])
-    if w <= 0 or h <= 0:
-        return 0.0
-    inter = w * h
-    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return inter / union if union > 0 else 0.0
 
 
 def read_persons(od_frame: Any) -> List[Dict[str, Any]]:
@@ -52,7 +47,7 @@ def suppress(persons: List[Dict[str, Any]], min_score: int, max_iou: float) -> L
     """Drop low scores and boxes overlapping a higher-scored one (viewer NMS)."""
     kept: List[Dict[str, Any]] = []
     for p in sorted(persons, key=lambda p: p["score"], reverse=True):
-        if p["score"] >= min_score and all(_iou(p["bbox"], k["bbox"]) <= max_iou for k in kept):
+        if p["score"] >= min_score and all(iou(p["bbox"], k["bbox"]) <= max_iou for k in kept):
             kept.append(p)
     return kept
 
@@ -70,10 +65,12 @@ def distance_stats(persons: List[Dict[str, Any]]) -> Dict[str, Any]:
 class PersonAnalytics:
     """Per-device person results, emitted through ``emit(event, payload)``."""
 
-    def __init__(self, emit: Callable[[str, Dict[str, Any]], None]):
+    def __init__(self, emit: Callable[[str, Dict[str, Any]], None], identities_file: Optional[Path] = None):
         self._emit = emit
         self._lock = threading.Lock()
         self._configs: Dict[str, PersonAnalyticsConfig] = {}
+        self._identities = IdentityStore(identities_file)
+        self._trackers: Dict[str, PersonTracker] = {}
         self._image_sizes: Dict[str, Dict[str, int]] = {}  # last color size; OD may come without color
         self._last_od_numbers: Dict[str, int] = {}
 
@@ -85,6 +82,21 @@ class PersonAnalytics:
         with self._lock:
             self._configs[device_id] = config
         return config
+
+    def tracker(self, device_id: str) -> PersonTracker:
+        with self._lock:
+            if device_id not in self._trackers:
+                self._trackers[device_id] = PersonTracker(self._identities)
+            return self._trackers[device_id]
+
+    def identities(self) -> List[str]:
+        return self._identities.names()
+
+    def forget(self, name: str) -> bool:
+        with self._lock:
+            trackers = list(self._trackers.values())
+        found = [t.forget(name) for t in trackers]  # each drops the name from its tracks
+        return self._identities.delete(name) or any(found)
 
     def on_od_frame(self, device_id: str, od_frame: Any, color_frame: Optional[Any]) -> Optional[Dict[str, Any]]:
         """Process one OD frame (with its matching color frame, if any) and emit the result."""
@@ -104,10 +116,17 @@ class PersonAnalytics:
             "persons": persons,
             "stats": distance_stats(persons),
         }
+        image = None
         if color_frame:
             vf = color_frame.as_video_frame()
             self._image_sizes[device_id] = {"width": vf.get_width(), "height": vf.get_height()}
             payload["color_frame_number"] = color_frame.get_frame_number()
+            image = np.asanyarray(vf.get_data())
         payload["image"] = self._image_sizes.get(device_id)
+        for p in persons:
+            p["track_id"] = p["name"] = None
+        if cfg.tracking:
+            features = [appearance(image, p["bbox"]) if image is not None else None for p in persons]
+            self.tracker(device_id).update(persons, features)
         self._emit(EVENT_NAME, payload)
         return payload

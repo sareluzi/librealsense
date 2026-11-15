@@ -1,6 +1,7 @@
 # License: Apache 2.0. See LICENSE file in root directory.
 # Copyright(c) 2026 RealSense, Inc. All Rights Reserved.
 
+from pathlib import Path
 from typing import Optional
 
 class Settings():
@@ -20,5 +21,8 @@ class Settings():
     TURN_SERVER: Optional[str] = None
     TURN_USERNAME: Optional[str] = None
     TURN_PASSWORD: Optional[str] = None
+
+    # Named persons of the person tracker sample, kept across server restarts
+    PERSON_IDENTITIES_FILE: Path = Path.home() / ".realsense" / "person-tracker-identities.json"
 
 settings = Settings()

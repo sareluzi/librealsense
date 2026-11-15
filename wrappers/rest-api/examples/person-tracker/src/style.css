@@ -361,6 +361,7 @@ h2 {
 
 /* Video fits both the column width and the window height (top bar + stats bar + padding) */
 .viewport {
+  position: relative;
   --max-h: calc(100vh - 150px);
   display: flex;
   justify-content: center;
@@ -369,6 +370,7 @@ h2 {
 
 canvas {
   display: block;
+  cursor: default;
   max-width: 100%;
   max-height: var(--max-h);
 }
@@ -387,4 +389,157 @@ canvas {
 .placeholder p {
   margin: 0;
   font-size: 15px;
+}
+
+canvas.taggable {
+  cursor: pointer;
+}
+
+/* ---- People ---- */
+.count {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--rs-ok);
+}
+
+.hint {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.people li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 6px 8px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--rs-dim);
+}
+
+.people li:hover {
+  background: var(--rs-inset);
+}
+
+.people li.here {
+  color: var(--rs-text);
+}
+
+.people .dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.people li:not(.here) .dot {
+  opacity: 0.4;
+}
+
+.people .who {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people .unnamed {
+  font-style: italic;
+}
+
+.people .when {
+  font-size: 12px;
+  color: var(--rs-dim);
+}
+
+.people li.here .when {
+  color: var(--rs-ok);
+}
+
+.people button,
+.icon-btn {
+  display: grid;
+  place-items: center;
+  padding: 5px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--rs-dim);
+}
+
+.people button:hover,
+.icon-btn:hover {
+  background: var(--rs-border);
+  color: var(--rs-text);
+}
+
+/* ---- Naming popover ---- */
+.tagger {
+  position: absolute;
+  z-index: 2;
+  width: 260px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--rs-border);
+  background: var(--rs-dark);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+.tagger label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--rs-muted);
+}
+
+.tagger input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--rs-border);
+  background: var(--rs-inset);
+  color: var(--rs-text);
+  font: inherit;
+}
+
+.tagger input:focus {
+  outline: 2px solid var(--rs-accent);
+  outline-offset: -1px;
+}
+
+.tagger-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--rs-blue);
+  color: #fff;
+  font-weight: 600;
+}
+
+.save:hover {
+  background: var(--rs-accent);
 }

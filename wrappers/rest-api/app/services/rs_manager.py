@@ -21,6 +21,7 @@ import socketio
 
 from app.services.metadata_socket_server import MetadataSocketServer
 from app.services.person_analytics import PersonAnalytics
+from app.core.config import get_settings
 from app.services import firmware as fw
 
 
@@ -115,7 +116,7 @@ class RealSenseManager:
 
         self.sio = sio
         self.metadata_socket_server = MetadataSocketServer(sio, self)
-        self.person_analytics = PersonAnalytics(self._emit_socket_event)
+        self.person_analytics = PersonAnalytics(self._emit_socket_event, get_settings().PERSON_IDENTITIES_FILE)
 
         # --- Per-Sensor Streaming State (Sensor API) ---
         # Tracks which mode each device is using: "pipeline", "sensor", or "idle"

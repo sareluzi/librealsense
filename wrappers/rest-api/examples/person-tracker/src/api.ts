@@ -12,6 +12,21 @@ export interface Person {
   score: number
   distance_m: number | null
   world: [number, number, number] | null
+  track_id: number | null // null until the track is confirmed, or with tracking off
+  name: string | null
+}
+
+export interface Track {
+  track_id: number
+  name: string | null
+  present: boolean
+  seconds_since_seen: number
+}
+
+export interface AnalyticsConfig {
+  nms_score: number
+  nms_iou: number
+  tracking: boolean
 }
 
 export interface Detections {
@@ -96,6 +111,24 @@ export const startStream = (deviceId: string, configs: StreamConfig[]) =>
   request('POST', `/devices/${deviceId}/stream/start`, { configs })
 
 export const stopStream = (deviceId: string) => request('POST', `/devices/${deviceId}/stream/stop`)
+
+const analytics = (deviceId: string) => `/devices/${deviceId}/person-analytics`
+
+export const getConfig = (deviceId: string) => request<AnalyticsConfig>('GET', `${analytics(deviceId)}/config`)
+
+export const setConfig = (deviceId: string, config: AnalyticsConfig) =>
+  request<AnalyticsConfig>('PUT', `${analytics(deviceId)}/config`, config)
+
+export const getTracks = (deviceId: string) => request<Track[]>('GET', `${analytics(deviceId)}/tracks`)
+
+/** Name a tracked person; null removes the name. Returns the updated tracks. */
+export const nameTrack = (deviceId: string, trackId: number, name: string | null) =>
+  request<Track[]>('PUT', `${analytics(deviceId)}/tracks/${trackId}`, { name })
+
+export const getIdentities = (deviceId: string) => request<string[]>('GET', `${analytics(deviceId)}/identities`)
+
+export const forgetIdentity = (deviceId: string, name: string) =>
+  request('DELETE', `${analytics(deviceId)}/identities/${encodeURIComponent(name)}`)
 
 /** Subscribe to the server's per-OD-frame person results. Returns the unsubscribe function. */
 export function onDetections(deviceId: string, callback: (d: Detections) => void): () => void {

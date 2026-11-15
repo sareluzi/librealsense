@@ -2,9 +2,10 @@
 // Copyright(c) 2026 RealSense, Inc. All Rights Reserved.
 
 import './style.css'
-import { findCamera, onDetections, openVideo, startStream, stopStream, type Detections } from './api'
+import { findCamera, getConfig, onDetections, openVideo, setConfig, startStream, stopStream, type Detections } from './api'
 import { icon, renderIcons } from './icons'
-import { DISTANCE_BANDS, UNKNOWN_COLOR, drawFrame } from './render'
+import { People } from './people'
+import { DISTANCE_BANDS, UNKNOWN_COLOR, drawFrame, personAt } from './render'
 
 // Same expiry as realsense-viewer: older detections are dropped, so a stalled detector blurs everything
 const STALE_MS = 200
@@ -39,8 +40,9 @@ function showError(message: string | null) {
   el.textContent = message ?? ''
 }
 
-type Toggle = 'blur' | 'boxes' | 'stats'
-const toggles: Record<Toggle, boolean> = { blur: true, boxes: true, stats: true }
+// Tracking runs on the server; the others only change what this page draws
+type Toggle = 'blur' | 'boxes' | 'stats' | 'tracking'
+const toggles: Record<Toggle, boolean> = { blur: true, boxes: true, stats: true, tracking: true }
 try {
   Object.assign(toggles, JSON.parse(localStorage.getItem('person-tracker-toggles') ?? '{}'))
 } catch {
@@ -55,6 +57,7 @@ for (const name of Object.keys(toggles) as Toggle[]) {
     toggles[name] = !toggles[name]
     sync()
     statsEl.hidden = !toggles.stats
+    if (name === 'tracking') applyTracking()
     try {
       localStorage.setItem('person-tracker-toggles', JSON.stringify(toggles))
     } catch {
@@ -71,6 +74,37 @@ $('legend').innerHTML =
 
 let latest: { d: Detections; at: number } | null = null
 let session: { deviceId: string; close: () => void } | null = null
+const people = new People(showError)
+
+async function applyTracking() {
+  if (!session) return
+  const id = session.deviceId
+  try {
+    await setConfig(id, { ...(await getConfig(id)), tracking: toggles.tracking })
+  } catch (e) {
+    showError((e as Error).message)
+  }
+}
+
+const freshDetections = () => (latest && performance.now() - latest.at < STALE_MS ? latest.d : null)
+
+/** The tracked person under a mouse event on the canvas, if any. */
+function trackedPersonAt(e: MouseEvent) {
+  const d = freshDetections()
+  if (!d?.image) return null
+  const r = canvas.getBoundingClientRect()
+  const p = personAt(d.persons, d.image, canvas, ((e.clientX - r.left) * canvas.width) / r.width,
+    ((e.clientY - r.top) * canvas.height) / r.height)
+  return p?.track_id != null ? p : null
+}
+
+canvas.onmousemove = (e) => canvas.classList.toggle('taggable', !!trackedPersonAt(e))
+canvas.onclick = (e) => {
+  const p = trackedPersonAt(e)
+  if (!p) return people.closeTagger()
+  const v = canvas.parentElement!.getBoundingClientRect()
+  people.openTagger(p.track_id!, p.name, { x: e.clientX - v.left, y: e.clientY - v.top })
+}
 
 const fmt = (m: number | null) => (m === null ? '–' : `${m.toFixed(2)} m`)
 const chip = (name: Parameters<typeof icon>[0], label: string, value: string) =>
@@ -92,7 +126,7 @@ function render() {
       canvas.width = video.videoWidth
       canvas.height = video.videoHeight
     }
-    const fresh = latest && performance.now() - latest.at < STALE_MS ? latest.d : null
+    const fresh = freshDetections()
     const image = fresh?.image ?? { width: canvas.width, height: canvas.height }
     drawFrame(ctx, video, fresh?.persons ?? [], image, toggles)
     if (!fresh) showStats(null)
@@ -130,6 +164,8 @@ async function start() {
         closeVideo()
       },
     }
+    await applyTracking()
+    people.follow(cam.deviceId)
     await video.play().catch(() => {})
     setState('streaming', 'Streaming')
     render()
@@ -145,6 +181,7 @@ async function stop() {
   session = null
   latest = null
   close()
+  people.follow(null)
   setState('idle', 'Idle')
   showStats(null)
   await stopStream(deviceId).catch((e) => {

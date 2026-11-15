@@ -45,6 +45,9 @@ def _check(events):
         for p in e["persons"]:
             x1, y1, x2, y2 = p["bbox"]
             assert 0 <= x1 < x2 <= w and 0 <= y1 < y2 <= h, p
+    # Tracking is on by default: anyone in view for a while gets a track ID
+    if sum(1 for e in events if e["persons"]) > 10:
+        assert any(p["track_id"] is not None for e in events for p in e["persons"]), "no person was tracked"
 
 
 def test_person_detections_pipeline_mode(od_camera):
