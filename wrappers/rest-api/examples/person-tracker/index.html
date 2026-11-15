@@ -20,6 +20,7 @@
       <aside class="panel" aria-label="Controls">
         <section>
           <h2><i data-icon="video"></i>Camera</h2>
+          <img id="device-image" class="device-image" src="d585.png" alt="RealSense D585" hidden />
           <div class="camera">
             <button id="start" class="start" aria-label="Start streaming" title="Start streaming">
               <i data-icon="play" data-size="22"></i>
@@ -40,6 +41,11 @@
           <button class="toggle" data-toggle="tracking"><i data-icon="tracking"></i><span>Tracking &amp; names</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="velocity"><i data-icon="velocity"></i><span>Speed &amp; direction</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="map"><i data-icon="map"></i><span>Top-down map</span><span class="switch"></span></button>
+          <div class="slider">
+            <label for="min-score"><i data-icon="target"></i><span>Min confidence</span><output id="min-score-value" for="min-score"></output></label>
+            <input id="min-score" type="range" min="0" max="100" step="5" value="45" />
+            <p class="muted">Persons the camera is less sure about are not shown, counted or tracked, and stay blurred.</p>
+          </div>
         </section>
 
         <section>

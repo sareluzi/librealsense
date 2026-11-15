@@ -70,6 +70,29 @@ for (const name of Object.keys(toggles) as Toggle[]) {
 }
 statsEl.hidden = !toggles.stats
 
+// Minimum detection confidence: the server's threshold, so boxes, stats and tracking agree
+const minScore = $<HTMLInputElement>('min-score')
+try {
+  minScore.value = localStorage.getItem('person-tracker-min-score') ?? minScore.value
+} catch {
+  /* storage unavailable: keep the default */
+}
+const showMinScore = () => ($('min-score-value').textContent = `${minScore.value}%`)
+showMinScore()
+let minScoreTimer = 0
+minScore.oninput = () => {
+  showMinScore()
+  clearTimeout(minScoreTimer)
+  minScoreTimer = window.setTimeout(() => {
+    try {
+      localStorage.setItem('person-tracker-min-score', minScore.value)
+    } catch {
+      /* ignore */
+    }
+    applyServerConfig()
+  }, 150)
+}
+
 /** Draw the top-down map card, its canvas kept at the card's on-screen size. */
 function renderMap(d: Detections | null) {
   const w = Math.round(mapCanvas.clientWidth * devicePixelRatio)
@@ -107,7 +130,12 @@ async function applyServerConfig() {
   if (!session) return
   const id = session.deviceId
   try {
-    await setConfig(id, { ...(await getConfig(id)), tracking: toggles.tracking, velocity: toggles.velocity })
+    await setConfig(id, {
+      ...(await getConfig(id)),
+      nms_score: Number(minScore.value),
+      tracking: toggles.tracking,
+      velocity: toggles.velocity,
+    })
   } catch (e) {
     showError((e as Error).message)
   }
@@ -171,6 +199,7 @@ async function start() {
     const cam = await findCamera()
     const [color] = cam.configs
     $('device-name').textContent = cam.name
+    $('device-image').hidden = !/d585/i.test(cam.name) // product picture, when we have one
     $('device-detail').textContent = `Color ${color.resolution.width}×${color.resolution.height} @ ${color.framerate} fps`
     await startStream(cam.deviceId, cam.configs)
     const unsubscribe = onDetections(cam.deviceId, (d) => {
