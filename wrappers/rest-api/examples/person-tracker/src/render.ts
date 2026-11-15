@@ -1,14 +1,20 @@
 // License: Apache 2.0. See LICENSE file in root directory.
 // Copyright(c) 2026 RealSense, Inc. All Rights Reserved.
 
-// Draws one video frame with the privacy blur and the distance-colored person boxes.
+// Draws one video frame with the privacy blur, the distance-colored person boxes, the velocity
+// arrows and the top-down map.
 
-import type { Person } from './api'
+import type { ImageInfo, Intrinsics, Person } from './api'
 
 export interface Layers {
   blur: boolean
   boxes: boolean
+  velocity: boolean
+  map: boolean
 }
+
+const ARROW_SECONDS = 1 // arrows point to where a person will be in this long
+const MAP_RANGE_M = 6
 
 // Upper bound (m) of each distance band and its box color; unknown distance is grey
 export const DISTANCE_BANDS: [number, string, string][] = [
@@ -36,7 +42,7 @@ export function identityColor(name: string | null, trackId: number) {
 export const who = (p: Person) => (p.track_id === null ? null : (p.name ?? `#${p.track_id}`))
 
 /** The person under canvas pixel (x, y), the smallest box if several overlap. */
-export function personAt(persons: Person[], image: { width: number; height: number }, canvas: HTMLCanvasElement,
+export function personAt(persons: Person[], image: ImageInfo, canvas: HTMLCanvasElement,
                          x: number, y: number): Person | null {
   const ix = (x * image.width) / canvas.width
   const iy = (y * image.height) / canvas.height
@@ -59,7 +65,7 @@ export function drawFrame(
   ctx: CanvasRenderingContext2D,
   video: HTMLVideoElement,
   persons: Person[],
-  image: { width: number; height: number },
+  image: ImageInfo,
   layers: Layers,
 ) {
   const { width, height } = ctx.canvas
@@ -87,11 +93,10 @@ export function drawFrame(
     ctx.drawImage(video, 0, 0, width, height)
   }
 
-  if (!layers.boxes) return
   const font = Math.max(12, Math.round(height / 40))
   ctx.font = `600 ${font}px system-ui, sans-serif`
   ctx.lineWidth = Math.max(2, height / 240)
-  persons.forEach((p, i) => {
+  if (layers.boxes) persons.forEach((p, i) => {
     const [x, y, w, h] = rects[i]
     const color = distanceColor(p.distance_m)
     ctx.strokeStyle = color
@@ -119,4 +124,136 @@ export function drawFrame(
     ctx.fillStyle = '#000'
     ctx.fillText(label, lx + 5 + (dot && dot + 6), ty + font)
   })
+  if (layers.velocity) drawVelocities(ctx, persons, image, font)
+  if (layers.map) drawMap(ctx, persons, image, font)
+}
+
+const add = (a: number[], b: number[], k: number) => a.map((v, i) => v + b[i] * k)
+
+/** Image pixel of a 3D camera point, or null behind (or too close to) the camera. */
+function project(intr: Intrinsics, [x, y, z]: number[]): [number, number] | null {
+  return z > 0.2 ? [(intr.fx * x) / z + intr.ppx, (intr.fy * y) / z + intr.ppy] : null
+}
+
+function arrow(ctx: CanvasRenderingContext2D, [x1, y1]: number[], [x2, y2]: number[], width: number) {
+  const angle = Math.atan2(y2 - y1, x2 - x1)
+  const head = width * 4
+  ctx.beginPath()
+  ctx.moveTo(x1, y1)
+  ctx.lineTo(x2, y2)
+  ctx.moveTo(x2 - head * Math.cos(angle - 0.45), y2 - head * Math.sin(angle - 0.45))
+  ctx.lineTo(x2, y2)
+  ctx.lineTo(x2 - head * Math.cos(angle + 0.45), y2 - head * Math.sin(angle + 0.45))
+  // Dark outline under a white line: visible on any background
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.strokeStyle = 'rgba(0,0,0,0.75)'
+  ctx.lineWidth = width + 3
+  ctx.stroke()
+  ctx.strokeStyle = '#fff'
+  ctx.lineWidth = width
+  ctx.stroke()
+}
+
+/** "1.4 m/s", with "toward" / "away" when most of the motion is along the camera axis. */
+export function speedLabel(v: NonNullable<Person['velocity']>) {
+  const along = Math.abs(v.vz) > 0.7 * v.speed_mps ? (v.vz < 0 ? ' · toward' : ' · away') : ''
+  return `${v.speed_mps.toFixed(1)} m/s${along}`
+}
+
+/** Velocity arrows of moving persons, from their (filtered) position to where they will be. */
+function drawVelocities(ctx: CanvasRenderingContext2D, persons: Person[], image: ImageInfo, font: number) {
+  const intr = image.intrinsics
+  if (!intr) return
+  const sx = ctx.canvas.width / image.width
+  const sy = ctx.canvas.height / image.height
+  const lw = Math.max(2, ctx.canvas.height / 200)
+  ctx.font = `600 ${font}px system-ui, sans-serif`
+  for (const p of persons) {
+    const v = p.velocity
+    if (!v?.moving) continue
+    const a = project(intr, v.position)
+    const b = project(intr, add(v.position, [v.vx, v.vy, v.vz], ARROW_SECONDS))
+    if (!a || !b) continue
+    const from = [a[0] * sx, a[1] * sy]
+    const to = [b[0] * sx, b[1] * sy]
+    arrow(ctx, from, to, lw)
+    const label = speedLabel(v)
+    const tw = ctx.measureText(label).width + 10
+    const lx = Math.max(0, Math.min(to[0] + 6, ctx.canvas.width - tw))
+    const ly = Math.max(0, to[1] - font - 4)
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'
+    ctx.fillRect(lx, ly, tw, font + 6)
+    ctx.fillStyle = '#fff'
+    ctx.fillText(label, lx + 5, ly + font)
+  }
+}
+
+/** A top view in the bottom-right corner: the camera at the bottom, each person as a dot. */
+function drawMap(ctx: CanvasRenderingContext2D, persons: Person[], image: ImageInfo, font: number) {
+  const { width, height } = ctx.canvas
+  const size = Math.round(Math.min(width, height) * 0.32)
+  const pad = Math.round(size * 0.06)
+  const x0 = width - size - pad
+  const y0 = height - size - pad
+  const cx = x0 + size / 2
+  const cy = y0 + size - pad
+  const scale = (size - 2 * pad) / MAP_RANGE_M
+  const small = Math.max(10, Math.round(font * 0.7))
+
+  ctx.save()
+  ctx.fillStyle = 'rgba(14,18,32,0.8)'
+  ctx.beginPath()
+  ctx.roundRect(x0, y0, size, size, pad)
+  ctx.fill()
+  ctx.clip()
+
+  // Range rings every meter, labelled every 2
+  ctx.font = `500 ${small}px system-ui, sans-serif`
+  ctx.lineWidth = 1
+  for (let r = 1; r <= MAP_RANGE_M; r++) {
+    ctx.strokeStyle = r % 2 ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.18)'
+    ctx.beginPath()
+    ctx.arc(cx, cy, r * scale, Math.PI, 2 * Math.PI)
+    ctx.stroke()
+    if (r % 2 === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.45)'
+      ctx.fillText(`${r} m`, cx + 4, cy - r * scale + small + 2)
+    }
+  }
+  // Field of view
+  if (image.intrinsics) {
+    const half = Math.atan(image.width / 2 / image.intrinsics.fx)
+    const reach = MAP_RANGE_M * scale * 1.2
+    ctx.strokeStyle = 'rgba(47,151,227,0.5)'
+    ctx.beginPath()
+    ctx.moveTo(cx - reach * Math.sin(half), cy - reach * Math.cos(half))
+    ctx.lineTo(cx, cy)
+    ctx.lineTo(cx + reach * Math.sin(half), cy - reach * Math.cos(half))
+    ctx.stroke()
+  }
+  ctx.fillStyle = '#2f97e3'
+  ctx.fillRect(cx - 6, cy - 3, 12, 6) // the camera
+
+  const toMap = (x: number, z: number) => [cx + x * scale, cy - z * scale]
+  for (const p of persons) {
+    const v = p.velocity
+    const pos = v?.position ?? p.world
+    if (!pos) continue
+    const [px, py] = toMap(pos[0], pos[2])
+    if (v?.moving) arrow(ctx, [px, py], toMap(pos[0] + v.vx * ARROW_SECONDS, pos[2] + v.vz * ARROW_SECONDS), 2)
+    ctx.beginPath()
+    ctx.arc(px, py, Math.max(4, size / 40), 0, 2 * Math.PI)
+    ctx.fillStyle = p.track_id === null ? distanceColor(p.distance_m) : identityColor(p.name, p.track_id)
+    ctx.fill()
+    ctx.strokeStyle = '#000'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+    const name = who(p)
+    if (name) {
+      ctx.fillStyle = '#fff'
+      ctx.fillText(name, px + 8, py - 6)
+    }
+  }
+  ctx.restore()
 }

@@ -5,7 +5,7 @@
 
 Each OD frame yields one Socket.IO ``person_detections`` event: persons only, after the same
 non-maximum suppression the C++ viewer applies, with distance stats and, with tracking on, the
-track ID and name of each person (see person_tracker).
+track ID, name and velocity of each person (see person_tracker and person_motion).
 """
 
 import threading
@@ -52,6 +52,18 @@ def suppress(persons: List[Dict[str, Any]], min_score: int, max_iou: float) -> L
     return kept
 
 
+def position(p: Dict[str, Any], intrinsics: Optional[Dict[str, float]]) -> Optional[List[float]]:
+    """3D position (m) of a person: the camera's center of mass, else the box center at the camera's distance."""
+    if p["world"]:
+        return p["world"]
+    if not intrinsics or p["distance_m"] is None:
+        return None
+    x1, y1, x2, y2 = p["bbox"]
+    d = p["distance_m"]
+    return [((x1 + x2) / 2 - intrinsics["ppx"]) / intrinsics["fx"] * d,
+            ((y1 + y2) / 2 - intrinsics["ppy"]) / intrinsics["fy"] * d, d]
+
+
 def distance_stats(persons: List[Dict[str, Any]]) -> Dict[str, Any]:
     dists = [p["distance_m"] for p in persons if p["distance_m"] is not None]
     return {
@@ -71,7 +83,7 @@ class PersonAnalytics:
         self._configs: Dict[str, PersonAnalyticsConfig] = {}
         self._identities = IdentityStore(identities_file)
         self._trackers: Dict[str, PersonTracker] = {}
-        self._image_sizes: Dict[str, Dict[str, int]] = {}  # last color size; OD may come without color
+        self._images: Dict[str, Dict[str, Any]] = {}  # last color size and intrinsics; OD may come without color
         self._last_od_numbers: Dict[str, int] = {}
 
     def get_config(self, device_id: str) -> PersonAnalyticsConfig:
@@ -119,14 +131,21 @@ class PersonAnalytics:
         image = None
         if color_frame:
             vf = color_frame.as_video_frame()
-            self._image_sizes[device_id] = {"width": vf.get_width(), "height": vf.get_height()}
+            i = vf.get_profile().as_video_stream_profile().get_intrinsics()
+            self._images[device_id] = {"width": vf.get_width(), "height": vf.get_height(),
+                                       "intrinsics": {"fx": i.fx, "fy": i.fy, "ppx": i.ppx, "ppy": i.ppy}}
             payload["color_frame_number"] = color_frame.get_frame_number()
             image = np.asanyarray(vf.get_data())
-        payload["image"] = self._image_sizes.get(device_id)
+        payload["image"] = self._images.get(device_id)
         for p in persons:
-            p["track_id"] = p["name"] = None
+            p["track_id"] = p["name"] = p["velocity"] = None
         if cfg.tracking:
+            intrinsics = payload["image"]["intrinsics"] if payload["image"] else None
             features = [appearance(image, p["bbox"]) if image is not None else None for p in persons]
-            self.tracker(device_id).update(persons, features)
+            positions = [position(p, intrinsics) for p in persons]
+            self.tracker(device_id).update(persons, features, positions, od_frame.get_timestamp() / 1000)
+            if not cfg.velocity:
+                for p in persons:
+                    p["velocity"] = None
         self._emit(EVENT_NAME, payload)
         return payload

@@ -40,9 +40,9 @@ function showError(message: string | null) {
   el.textContent = message ?? ''
 }
 
-// Tracking runs on the server; the others only change what this page draws
-type Toggle = 'blur' | 'boxes' | 'stats' | 'tracking'
-const toggles: Record<Toggle, boolean> = { blur: true, boxes: true, stats: true, tracking: true }
+// Tracking and velocity run on the server; the others only change what this page draws
+type Toggle = 'blur' | 'boxes' | 'stats' | 'tracking' | 'velocity' | 'map'
+const toggles: Record<Toggle, boolean> = { blur: true, boxes: true, stats: true, tracking: true, velocity: true, map: true }
 try {
   Object.assign(toggles, JSON.parse(localStorage.getItem('person-tracker-toggles') ?? '{}'))
 } catch {
@@ -57,7 +57,8 @@ for (const name of Object.keys(toggles) as Toggle[]) {
     toggles[name] = !toggles[name]
     sync()
     statsEl.hidden = !toggles.stats
-    if (name === 'tracking') applyTracking()
+    if (name === 'tracking' || name === 'velocity') applyServerConfig()
+    syncVelocityToggle()
     try {
       localStorage.setItem('person-tracker-toggles', JSON.stringify(toggles))
     } catch {
@@ -76,11 +77,17 @@ let latest: { d: Detections; at: number } | null = null
 let session: { deviceId: string; close: () => void } | null = null
 const people = new People(showError)
 
-async function applyTracking() {
+// Velocity needs tracking: its toggle is greyed out while tracking is off
+function syncVelocityToggle() {
+  document.querySelector('[data-toggle="velocity"]')!.classList.toggle('needs', !toggles.tracking)
+}
+syncVelocityToggle()
+
+async function applyServerConfig() {
   if (!session) return
   const id = session.deviceId
   try {
-    await setConfig(id, { ...(await getConfig(id)), tracking: toggles.tracking })
+    await setConfig(id, { ...(await getConfig(id)), tracking: toggles.tracking, velocity: toggles.velocity })
   } catch (e) {
     showError((e as Error).message)
   }
@@ -164,7 +171,7 @@ async function start() {
         closeVideo()
       },
     }
-    await applyTracking()
+    await applyServerConfig()
     people.follow(cam.deviceId)
     await video.play().catch(() => {})
     setState('streaming', 'Streaming')

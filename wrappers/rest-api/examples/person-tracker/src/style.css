@@ -288,6 +288,10 @@ h2 {
   transition: transform 0.15s, background 0.15s;
 }
 
+.toggle.needs {
+  opacity: 0.45;
+}
+
 .toggle[aria-pressed='true'] .switch {
   background: var(--rs-blue);
 }

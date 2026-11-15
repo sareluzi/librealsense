@@ -14,6 +14,30 @@ export interface Person {
   world: [number, number, number] | null
   track_id: number | null // null until the track is confirmed, or with tracking off
   name: string | null
+  velocity: Velocity | null // null until settled, or with tracking or velocity off
+}
+
+export interface Velocity {
+  position: [number, number, number] // filtered 3D position, m (x right, y down, z forward)
+  vx: number
+  vy: number
+  vz: number
+  speed_mps: number // on the floor plane
+  heading_deg: number // 0 = away from the camera, 90 = to its right, 180 = toward it
+  moving: boolean
+}
+
+export interface Intrinsics {
+  fx: number
+  fy: number
+  ppx: number
+  ppy: number
+}
+
+export interface ImageInfo {
+  width: number
+  height: number
+  intrinsics?: Intrinsics
 }
 
 export interface Track {
@@ -27,13 +51,14 @@ export interface AnalyticsConfig {
   nms_score: number
   nms_iou: number
   tracking: boolean
+  velocity: boolean
 }
 
 export interface Detections {
   device_id: string
   od_frame_number: number
   color_frame_number: number | null
-  image: { width: number; height: number } | null
+  image: ImageInfo | null
   persons: Person[]
   stats: { count: number; min_m: number | null; max_m: number | null; avg_m: number | null }
 }

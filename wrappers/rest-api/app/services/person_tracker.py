@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from app.services.person_motion import Motion
+
 # Clothing color feature, per body part (torso, legs): a hue x saturation histogram of colored
 # pixels plus a brightness histogram of grey ones, so black/white/grey clothes count too
 H_BINS, S_BINS, V_BINS = 16, 3, 4
@@ -140,6 +142,7 @@ class Track:
         self.gallery: deque = deque(gallery, maxlen=GALLERY)
         self.bbox: Optional[List[int]] = None
         self.world: Optional[List[float]] = None
+        self.motion = Motion()
         self.hits = 0
         self.misses = MAX_MISSES + 1 if gallery else 0  # saved identities start out lost
         self.last_seen = time.monotonic()
@@ -190,8 +193,12 @@ class PersonTracker:
                 + 0.2 * (step / MAX_STEP_M if step is not None else 0.5)
                 + 0.35 * (1 - sim if sim is not None else 0.5))
 
-    def update(self, persons: List[Dict[str, Any]], features: List[Optional[np.ndarray]]) -> None:
-        """Match one OD frame's persons to tracks; sets each person's `track_id` and `name`."""
+    def update(self, persons: List[Dict[str, Any]], features: List[Optional[np.ndarray]],
+               positions: Optional[List[Optional[List[float]]]] = None, when: Optional[float] = None) -> None:
+        """Match one OD frame's persons to tracks; sets each person's `track_id`, `name` and `velocity`.
+
+        `positions` (3D, m) and `when` (camera time, s) of the persons feed each track's velocity.
+        """
         now = time.monotonic()
         with self._lock:
             assigned: Dict[int, Track] = {}  # person index -> track
@@ -231,8 +238,11 @@ class PersonTracker:
                 clean = all(iou(p["bbox"], q["bbox"]) < 0.1 for q in persons if q is not p)
                 if f is not None and clean and (len(t.gallery) < 5 or t.hits % 3 == 0):
                     t.gallery.append(f)
+                if positions and positions[di] and when is not None:
+                    t.motion.update(positions[di], when)
                 p["track_id"] = t.id if t.confirmed else None
                 p["name"] = t.name
+                p["velocity"] = t.motion.velocity() if t.confirmed else None
 
             for t in list(self._tracks.values()):
                 if t in assigned.values():

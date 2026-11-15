@@ -11,7 +11,8 @@ import pytest
 import pyrealsense2 as rs
 from fastapi.testclient import TestClient
 
-from app.services.person_analytics import PersonAnalytics, distance_stats, read_persons, suppress
+from app.models.person_analytics import PersonAnalyticsConfig
+from app.services.person_analytics import PersonAnalytics, distance_stats, position, read_persons, suppress
 from app.services.rs_manager import RealSenseManager
 
 
@@ -62,6 +63,10 @@ class _ColorFrame:
     def get_data(self):
         return np.zeros((self.h, self.w, 3), np.uint8)
 
+    def get_profile(self):
+        intr = SimpleNamespace(fx=600.0, fy=600.0, ppx=self.w / 2, ppy=self.h / 2)
+        return SimpleNamespace(as_video_stream_profile=lambda: SimpleNamespace(get_intrinsics=lambda: intr))
+
 
 def test_read_persons_keeps_class_0_and_maps_invalid_depth_to_none():
     persons = read_persons(_OdFrame([_det([0, 0, 10, 10]), _det([5, 5, 9, 9], class_id=1),
@@ -100,12 +105,13 @@ def test_on_od_frame_emits_payload_and_remembers_image_size():
     pa = PersonAnalytics(emit)
     payload = pa.on_od_frame("dev", _OdFrame([_det([0, 0, 10, 10])]), _ColorFrame())
     emit.assert_called_once_with("person_detections", payload)
-    assert payload["image"] == {"width": 1280, "height": 720}
+    assert payload["image"] == {"width": 1280, "height": 720,
+                                "intrinsics": {"fx": 600.0, "fy": 600.0, "ppx": 640.0, "ppy": 360.0}}
     assert payload["color_frame_number"] == 55 and payload["od_frame_number"] == 7
     assert payload["stats"]["count"] == 1
     assert payload["persons"][0]["track_id"] is None  # tracked, not confirmed yet
     # An OD frame without a matching color frame keeps the last known size for box scaling
-    assert pa.on_od_frame("dev", _OdFrame([], frame_number=8), None)["image"] == {"width": 1280, "height": 720}
+    assert pa.on_od_frame("dev", _OdFrame([], frame_number=8), None)["image"]["width"] == 1280
 
 
 def test_on_od_frame_skips_repeated_frame_number():
@@ -134,8 +140,8 @@ def test_config_endpoint_round_trip(monkeypatch):
     monkeypatch.setattr(dependencies, "_realsense_manager", mgr)
     client = TestClient(app)
     url = "/api/v1/devices/dev/person-analytics/config"
-    assert client.get(url).json() == {"nms_score": 45, "nms_iou": 0.55, "tracking": True}
-    new = {"nms_score": 60, "nms_iou": 0.4, "tracking": False}
+    assert client.get(url).json() == {"nms_score": 45, "nms_iou": 0.55, "tracking": True, "velocity": True}
+    new = {"nms_score": 60, "nms_iou": 0.4, "tracking": False, "velocity": False}
     assert client.put(url, json=new).json() == new
     assert client.get(url).json() == new
     assert client.put(url, json={"nms_score": 101, "nms_iou": 0.4}).status_code == 422
@@ -162,3 +168,32 @@ def test_tracking_endpoints(monkeypatch, tmp_path):
     assert client.delete(f"{url}/identities/Alice").status_code == 200
     assert client.get(f"{url}/identities").json() == []
     assert client.delete(f"{url}/identities/Alice").status_code == 404
+
+
+def test_position_falls_back_to_box_center_at_camera_distance():
+    intr = {"fx": 500.0, "fy": 500.0, "ppx": 320.0, "ppy": 240.0}
+    p = {"bbox": [420, 140, 520, 340], "distance_m": 2.0, "world": None}
+    assert position(p, intr) == pytest.approx([(470 - 320) / 500 * 2, 0.0, 2.0])
+    assert position({**p, "world": [1, 2, 3]}, intr) == [1, 2, 3]
+    assert position({**p, "distance_m": None}, intr) is None
+
+
+def _walk_past(pa, frames=20):
+    """A person walking right at 1 m/s at 2 m, 30 fps. Returns the last payload."""
+    for n in range(frames):
+        x = 400 + int(n / 30 * 300)  # 1 m/s at 2 m is 300 px/s with fx=600
+        payload = pa.on_od_frame("dev", _OdFrame([_det([x, 200, x + 100, 500], depth=2.0)], frame_number=n,
+                                                 timestamp=1e6 + n * 1000 / 30), _ColorFrame())
+    return payload
+
+
+def test_velocity_of_a_tracked_person():
+    v = _walk_past(PersonAnalytics(MagicMock()))["persons"][0]["velocity"]
+    assert v["speed_mps"] == pytest.approx(1.0, abs=0.15) and v["moving"]
+
+
+def test_velocity_off_in_config():
+    pa = PersonAnalytics(MagicMock())
+    pa.set_config("dev", PersonAnalyticsConfig(velocity=False))
+    p = _walk_past(pa)["persons"][0]
+    assert p["track_id"] is not None and p["velocity"] is None
