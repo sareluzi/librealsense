@@ -5,7 +5,7 @@ import './style.css'
 import { findCamera, getConfig, onDetections, openVideo, setConfig, startStream, stopStream, type Detections } from './api'
 import { icon, renderIcons } from './icons'
 import { People } from './people'
-import { DISTANCE_BANDS, UNKNOWN_COLOR, drawFrame, personAt } from './render'
+import { DISTANCE_BANDS, UNKNOWN_COLOR, drawFrame, drawMap, personAt } from './render'
 
 // Same expiry as realsense-viewer: older detections are dropped, so a stalled detector blurs everything
 const STALE_MS = 200
@@ -16,6 +16,7 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const video = $<HTMLVideoElement>('video')
 const canvas = $<HTMLCanvasElement>('canvas')
 const ctx = canvas.getContext('2d')!
+const mapCanvas = $<HTMLCanvasElement>('map')
 const startBtn = $<HTMLButtonElement>('start')
 const statsEl = $('stats')
 
@@ -57,6 +58,7 @@ for (const name of Object.keys(toggles) as Toggle[]) {
     toggles[name] = !toggles[name]
     sync()
     statsEl.hidden = !toggles.stats
+    showMap()
     if (name === 'tracking' || name === 'velocity') applyServerConfig()
     syncVelocityToggle()
     try {
@@ -67,6 +69,24 @@ for (const name of Object.keys(toggles) as Toggle[]) {
   }
 }
 statsEl.hidden = !toggles.stats
+
+/** Draw the top-down map card, its canvas kept at the card's on-screen size. */
+function renderMap(d: Detections | null) {
+  const w = Math.round(mapCanvas.clientWidth * devicePixelRatio)
+  const h = Math.round(mapCanvas.clientHeight * devicePixelRatio)
+  if (!w || !h) return
+  if (mapCanvas.width !== w || mapCanvas.height !== h) {
+    mapCanvas.width = w
+    mapCanvas.height = h
+  }
+  drawMap(mapCanvas.getContext('2d')!, d?.persons ?? [], d?.image ?? null)
+}
+
+function showMap() {
+  $('map-card').hidden = !toggles.map
+  renderMap(null)
+}
+showMap()
 
 const swatch = (c: string, label: string) =>
   `<span><b style="border-color:${c};background:${c}33"></b>${label}</span>`
@@ -136,6 +156,7 @@ function render() {
     const fresh = freshDetections()
     const image = fresh?.image ?? { width: canvas.width, height: canvas.height }
     drawFrame(ctx, video, fresh?.persons ?? [], image, toggles)
+    if (toggles.map) renderMap(fresh)
     if (!fresh) showStats(null)
   }
   if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(render)
@@ -190,6 +211,7 @@ async function stop() {
   close()
   people.follow(null)
   setState('idle', 'Idle')
+  renderMap(null)
   showStats(null)
   await stopStream(deviceId).catch((e) => {
     setState('error', 'Error')

@@ -121,18 +121,46 @@ h1 {
 /* ---- Layout ---- */
 .layout {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr) 360px;
   gap: 16px;
   padding: 16px;
   align-items: start;
 }
 
+.layout:has(#map-card[hidden]) {
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+/* Not enough width for three columns: the map goes under the video */
+@media (max-width: 1180px) {
+  .layout,
+  .layout:has(#map-card[hidden]) {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+  .panel {
+    grid-row: span 2;
+  }
+  .map-card {
+    grid-column: 2;
+    max-width: 560px;
+  }
+}
+
 @media (max-width: 820px) {
-  .layout {
+  .layout,
+  .layout:has(#map-card[hidden]) {
     grid-template-columns: 1fr;
   }
+  .panel {
+    grid-row: auto;
+  }
   .stage {
+    order: -2;
+  }
+  .map-card {
+    grid-column: auto;
     order: -1;
+    max-width: none;
   }
 }
 
@@ -546,4 +574,26 @@ canvas.taggable {
 
 .save:hover {
   background: var(--rs-accent);
+}
+
+/* ---- Top-down map card ---- */
+.map-card {
+  padding: 14px 16px;
+  background: var(--rs-dark);
+  border: 1px solid var(--rs-border);
+  border-radius: 12px;
+}
+
+#map {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10; /* the map is a half disc in front of the camera */
+  border-radius: 8px;
+  background: var(--rs-darker);
+}
+
+.map-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
 }

@@ -1,8 +1,8 @@
 // License: Apache 2.0. See LICENSE file in root directory.
 // Copyright(c) 2026 RealSense, Inc. All Rights Reserved.
 
-// Draws one video frame with the privacy blur, the distance-colored person boxes, the velocity
-// arrows and the top-down map.
+// Draws one video frame with the privacy blur, the distance-colored person boxes and the velocity
+// arrows, and the top-down map on its own canvas.
 
 import type { ImageInfo, Intrinsics, Person } from './api'
 
@@ -10,7 +10,6 @@ export interface Layers {
   blur: boolean
   boxes: boolean
   velocity: boolean
-  map: boolean
 }
 
 const ARROW_SECONDS = 1 // arrows point to where a person will be in this long
@@ -125,7 +124,6 @@ export function drawFrame(
     ctx.fillText(label, lx + 5 + (dot && dot + 6), ty + font)
   })
   if (layers.velocity) drawVelocities(ctx, persons, image, font)
-  if (layers.map) drawMap(ctx, persons, image, font)
 }
 
 const add = (a: number[], b: number[], k: number) => a.map((v, i) => v + b[i] * k)
@@ -189,24 +187,19 @@ function drawVelocities(ctx: CanvasRenderingContext2D, persons: Person[], image:
   }
 }
 
-/** A top view in the bottom-right corner: the camera at the bottom, each person as a dot. */
-function drawMap(ctx: CanvasRenderingContext2D, persons: Person[], image: ImageInfo, font: number) {
+/** Top view on its own canvas: the camera at the bottom center, each person as a dot. `image` gives the field of view. */
+export function drawMap(ctx: CanvasRenderingContext2D, persons: Person[], image: ImageInfo | null) {
   const { width, height } = ctx.canvas
-  const size = Math.round(Math.min(width, height) * 0.32)
-  const pad = Math.round(size * 0.06)
-  const x0 = width - size - pad
-  const y0 = height - size - pad
-  const cx = x0 + size / 2
-  const cy = y0 + size - pad
-  const scale = (size - 2 * pad) / MAP_RANGE_M
-  const small = Math.max(10, Math.round(font * 0.7))
+  const size = Math.min(width, height)
+  const pad = Math.round(size * 0.05)
+  const cx = width / 2
+  const cy = height - pad
+  const scale = Math.min(cy - pad, width / 2 - pad) / MAP_RANGE_M
+  const font = Math.max(11, Math.round(size / 26))
+  const small = Math.max(10, Math.round(font * 0.85))
 
   ctx.save()
-  ctx.fillStyle = 'rgba(14,18,32,0.8)'
-  ctx.beginPath()
-  ctx.roundRect(x0, y0, size, size, pad)
-  ctx.fill()
-  ctx.clip()
+  ctx.clearRect(0, 0, width, height)
 
   // Range rings every meter, labelled every 2
   ctx.font = `500 ${small}px system-ui, sans-serif`
@@ -222,7 +215,7 @@ function drawMap(ctx: CanvasRenderingContext2D, persons: Person[], image: ImageI
     }
   }
   // Field of view
-  if (image.intrinsics) {
+  if (image?.intrinsics) {
     const half = Math.atan(image.width / 2 / image.intrinsics.fx)
     const reach = MAP_RANGE_M * scale * 1.2
     ctx.strokeStyle = 'rgba(47,151,227,0.5)'
@@ -242,8 +235,9 @@ function drawMap(ctx: CanvasRenderingContext2D, persons: Person[], image: ImageI
     if (!pos) continue
     const [px, py] = toMap(pos[0], pos[2])
     if (v?.moving) arrow(ctx, [px, py], toMap(pos[0] + v.vx * ARROW_SECONDS, pos[2] + v.vz * ARROW_SECONDS), 2)
+    ctx.font = `600 ${font}px system-ui, sans-serif`
     ctx.beginPath()
-    ctx.arc(px, py, Math.max(4, size / 40), 0, 2 * Math.PI)
+    ctx.arc(px, py, Math.max(5, size / 45), 0, 2 * Math.PI)
     ctx.fillStyle = p.track_id === null ? distanceColor(p.distance_m) : identityColor(p.name, p.track_id)
     ctx.fill()
     ctx.strokeStyle = '#000'
