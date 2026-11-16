@@ -142,21 +142,27 @@ For more details about the React viewer features and development, see `tools/rea
 ### Person Tracker sample
 
 `examples/person-tracker` is a small web app built on this API for cameras with on-camera person
-detection (e.g. D585). It shows the color stream, keeps detected persons sharp and blurs the rest,
+detection (e.g. D585). It shows the persons in color over the camera's aligned depth (D585),
 colors each box by distance and shows count / min / max / average distance. The server also tracks
 each person, so clicking a box names that person and the name follows them, even after they leave
 and come back. Moving persons get a speed and direction arrow, the camera's center-of-mass point of
 each person is marked, and a top-down map shows where everyone is. When the camera has an IMU, the
-page also streams it and warns while the camera itself moves. Each layer has a toggle.
+page also streams it and warns while the camera itself moves. The depth background (color instead
+of depth when off), and a small depth window are on by default; a privacy blur
+of everything outside the persons is off. Color and depth stream at one selectable resolution
+(1280x720 by default). Each layer has a toggle.
 
 ```bash
 cd examples/person-tracker && npm install && npm run build
 ```
 
 The server serves the build at `http://localhost:8000/samples/person-tracker/` (restart it after
-the first build). The page starts color + `object_detection` (+ `gyro` and `accel` when present) with
-`POST /devices/{id}/stream/start`,
-plays color over WebRTC and draws the server's `person_detections` Socket.IO events, sent once per
+the first build). The page starts color + `depth` + `object_detection` (+ `gyro` and `accel` when
+present) with `POST /devices/{id}/stream/start`, after setting the depth sensor's `enable_aligned_depth`
+option when the camera has it (it can change only while depth is stopped). Depth always streams, so
+the depth layers only show or hide it. Color and depth share the selected resolution, so they match
+pixel for pixel (with 1280x960 depth the D585 reports persons without a distance). It plays color and
+depth over WebRTC and draws the server's `person_detections` Socket.IO events, sent once per
 detection frame:
 
 ```json

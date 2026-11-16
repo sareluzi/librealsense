@@ -30,19 +30,26 @@
               <div id="device-detail" class="muted">Press play to find a camera with person detection</div>
             </div>
           </div>
+          <div class="slider select">
+            <label for="resolution"><i data-icon="monitor"></i><span>Resolution</span></label>
+            <select id="resolution" disabled><option>Looking for a camera…</option></select>
+            <p class="muted">Color and depth both stream at this size.</p>
+          </div>
           <div id="imu" class="imu" data-state="none" hidden><i data-icon="move" data-size="15"></i><span id="imu-text"></span></div>
           <div id="error" class="error" hidden></div>
         </section>
 
         <section>
           <h2><i data-icon="layers"></i>Layers</h2>
-          <button class="toggle" data-toggle="blur"><i data-icon="blur"></i><span>Privacy blur</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="boxes"><i data-icon="boxes"></i><span>Person boxes</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="stats"><i data-icon="stats"></i><span>Distance stats</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="tracking"><i data-icon="tracking"></i><span>Tracking &amp; names</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="com"><i data-icon="com"></i><span>Center of mass</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="velocity"><i data-icon="velocity"></i><span>Speed &amp; direction</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="map"><i data-icon="map"></i><span>Top-down map</span><span class="switch"></span></button>
+          <button class="toggle" data-toggle="depth"><i data-icon="depth"></i><span>Depth window</span><span class="switch"></span></button>
+          <button class="toggle" data-toggle="depthBg" title="Show the camera's aligned depth instead of color outside the person boxes"><i data-icon="depthBg"></i><span>Depth background</span><span class="switch"></span></button>
+          <button class="toggle" data-toggle="blur"><i data-icon="blur"></i><span>Privacy blur</span><span class="switch"></span></button>
           <div class="slider">
             <label for="min-score"><i data-icon="target"></i><span>Min confidence</span><output id="min-score-value" for="min-score"></output></label>
             <input id="min-score" type="range" min="0" max="100" step="5" value="45" />
@@ -56,10 +63,6 @@
           <ul id="people" class="people"></ul>
         </section>
 
-        <section>
-          <h2><i data-icon="ruler"></i>Box color by distance</h2>
-          <div id="legend" class="legend"></div>
-        </section>
       </aside>
 
       <main class="stage">
@@ -81,13 +84,24 @@
             <p>Not streaming</p>
           </div>
         </div>
+        <div class="legend-bar"><span class="legend-title"><i data-icon="ruler" data-size="15"></i>Box color by distance</span><div id="legend" class="legend"></div></div>
       </main>
 
-      <aside id="map-card" class="map-card" aria-label="Top-down map">
-        <h2><i data-icon="map"></i>Top-down map</h2>
-        <canvas id="map"></canvas>
-        <p class="muted map-note">Camera at the bottom; rings every meter. Arrows show where people will be in 1 s.</p>
-      </aside>
+      <div id="side" class="side">
+        <aside id="map-card" class="map-card" aria-label="Top-down map">
+          <h2><i data-icon="map"></i>Top-down map</h2>
+          <canvas id="map"></canvas>
+          <p class="muted map-note">Camera at the bottom; rings every meter. Arrows show where people will be in 1 s.</p>
+        </aside>
+        <aside id="depth-card" class="map-card" aria-label="Depth">
+          <h2><i data-icon="depth"></i>Depth</h2>
+          <div class="depth-view">
+            <video id="depth-video" muted playsinline></video>
+            <p id="depth-empty" class="muted">Starts with the stream</p>
+          </div>
+          <p id="depth-note" class="muted map-note"></p>
+        </aside>
+      </div>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden>

@@ -105,8 +105,25 @@ const toConfig = (sensor_id: string, p: Profile): StreamConfig => ({
   framerate: p.fps,
 })
 
-/** First camera with an object detection stream, and the color + OD configs to start on it. */
-export async function findCamera(): Promise<{ deviceId: string; name: string; configs: StreamConfig[] }> {
+export interface Resolution {
+  width: number
+  height: number
+}
+
+export interface Camera {
+  deviceId: string
+  name: string
+  resolutions: Resolution[] // color sizes at the OD rate (that depth also has, when there is depth), largest first
+  hasDepth: boolean
+  alignSensorId: string | null // the sensor with on-camera depth-to-color alignment, if any
+  streams: (res: Resolution, depth: boolean) => StreamConfig[] // color, OD, the IMU when present, and depth if asked
+}
+
+// Measured on the D585: with 1280x960 depth, its person detections come without a distance
+export const losesDistanceWithDepth = (r: Resolution) => r.width === 1280 && r.height === 960
+
+/** First camera with an object detection stream, and the streams to start on it. */
+export async function findCamera(): Promise<Camera> {
   const devices = await request<{ device_id: string; name: string }[]>('GET', '/devices/')
   for (const dev of devices) {
     const sensors = await request<Sensor[]>('GET', `/devices/${dev.device_id}/sensors/`)
@@ -119,26 +136,53 @@ export async function findCamera(): Promise<{ deviceId: string; name: string; co
     }
     const od = pick('object_detection')
     const color = pick('color')
-    // The IMU, at its lowest rates: enough to tell that the camera moves
-    const imu = (type: string) => pick(type)?.profiles.reduce((a, b) => (b.fps < a.fps ? b : a))
-    const gyro = imu('gyro')
-    const accel = imu('accel')
     if (!od || !color) continue
     const odProfile = od.profiles.reduce((a, b) => (b.fps > a.fps ? b : a))
-    // RGB8 at the OD rate, the largest one no wider than 1280 so the blur stays cheap
-    const rgb = color.profiles.filter((p) => p.format.toLowerCase() === 'rgb8' && p.fps === odProfile.fps)
-    const colorProfile = rgb.filter((p) => p.width <= 1280).sort((a, b) => b.width - a.width)[0] ?? rgb[0]
-    if (!colorProfile) continue
-    const configs = [toConfig(color.sensor.sensor_id, colorProfile), toConfig(od.sensor.sensor_id, odProfile)]
-    if (gyro && accel)
-      configs.push(toConfig(pick('gyro')!.sensor.sensor_id, gyro), toConfig(pick('accel')!.sensor.sensor_id, accel))
-    return { deviceId: dev.device_id, name: dev.name, configs }
+    const atOdRate = (ps: Profile[], format: string) =>
+      ps.filter((p) => p.format.toLowerCase() === format && p.fps === odProfile.fps)
+    const rgb = atOdRate(color.profiles, 'rgb8')
+    // Color and depth always run at one resolution, so aligned depth matches color pixel for pixel
+    const depth = pick('depth')
+    const z16 = depth ? atOdRate(depth.profiles, 'z16') : []
+    const same = (a: Resolution) => (b: Resolution) => a.width === b.width && a.height === b.height
+    const resolutions = rgb
+      .filter((c) => !z16.length || z16.some(same(c)))
+      .map(({ width, height }) => ({ width, height }))
+      .sort((a, b) => b.width * b.height - a.width * a.height)
+    if (!resolutions.length) continue
+    // The IMU, at its lowest rates: enough to tell that the camera moves
+    const imu = ['gyro', 'accel'].map((t) => {
+      const m = pick(t)
+      return m && toConfig(m.sensor.sensor_id, m.profiles.reduce((a, b) => (b.fps < a.fps ? b : a)))
+    })
+    let alignSensorId: string | null = null
+    if (depth && z16.length) {
+      const options = await request<{ option_id: string }[]>('GET', `/devices/${dev.device_id}/sensors/${depth.sensor.sensor_id}/options/`)
+      if (options.some((o) => o.option_id === 'enable_aligned_depth')) alignSensorId = depth.sensor.sensor_id
+    }
+    return {
+      deviceId: dev.device_id,
+      name: dev.name,
+      resolutions,
+      hasDepth: z16.length > 0,
+      alignSensorId,
+      streams: (res, withDepth) => [
+        toConfig(color.sensor.sensor_id, rgb.find(same(res))!),
+        toConfig(od.sensor.sensor_id, odProfile),
+        ...(imu.every(Boolean) ? (imu as StreamConfig[]) : []),
+        ...(withDepth && depth ? [toConfig(depth.sensor.sensor_id, z16.find(same(res))!)] : []),
+      ],
+    }
   }
   throw new Error('No connected camera has an object detection stream')
 }
 
 export const startStream = (deviceId: string, configs: StreamConfig[]) =>
   request('POST', `/devices/${deviceId}/stream/start`, { configs })
+
+/** Turn the camera's own depth-to-color alignment on or off; only possible while depth is stopped. */
+export const setAlignedDepth = (deviceId: string, sensorId: string, on: boolean) =>
+  request('PUT', `/devices/${deviceId}/sensors/${sensorId}/options/enable_aligned_depth/`, { value: on ? 1 : 0 })
 
 export const stopStream = (deviceId: string) => request('POST', `/devices/${deviceId}/stream/stop`)
 
@@ -167,15 +211,15 @@ export function onDetections(deviceId: string, callback: (d: Detections) => void
   return () => socket.disconnect()
 }
 
-/** Play the device's color stream into `video` over WebRTC. Returns the close function. */
-export async function openVideo(deviceId: string, video: HTMLVideoElement): Promise<() => void> {
+/** Play one of the device's streams (color, or depth colorized by the server) into `video` over WebRTC. Returns the close function. */
+export async function openVideo(deviceId: string, video: HTMLVideoElement, stream = 'color'): Promise<() => void> {
   const pc = new RTCPeerConnection()
   pc.ontrack = (e) => (video.srcObject = e.streams[0] ?? new MediaStream([e.track]))
 
   // The server makes the offer; we answer and exchange ICE candidates over REST
   const offer = await request<{ session_id: string; sdp: string; type: RTCSdpType }>('POST', '/webrtc/offer', {
     device_id: deviceId,
-    stream_types: ['color'],
+    stream_types: [stream],
   })
   const session = offer.session_id
   const close = () => {

@@ -8,6 +8,7 @@ import type { ImageInfo, Intrinsics, Person } from './api'
 
 export interface Layers {
   blur: boolean
+  depthBg: boolean
   boxes: boolean
   com: boolean
   velocity: boolean
@@ -58,8 +59,9 @@ const small = document.createElement('canvas')
 
 /**
  * Draw `video` onto `ctx` (canvas already sized to the video) with `persons`, whose boxes are in
- * `image`-sized pixels. With blur on, everything outside the boxes is blurred, including the whole
- * frame when there are no (fresh) detections.
+ * `image`-sized pixels. Outside the boxes the background is the color video, or `depth` (the camera's
+ * depth aligned to color) with the depth background on; with blur on it is blurred, including the
+ * whole frame when there are no (fresh) detections.
  */
 export function drawFrame(
   ctx: CanvasRenderingContext2D,
@@ -68,6 +70,7 @@ export function drawFrame(
   image: ImageInfo,
   layers: Layers,
   cameraMoving = false,
+  depth: HTMLVideoElement | null = null,
 ) {
   const { width, height } = ctx.canvas
   const sx = width / image.width
@@ -77,21 +80,24 @@ export function drawFrame(
     return [x1 * sx, y1 * sy, (x2 - x1) * sx, (y2 - y1) * sy] as const
   })
 
+  const background = layers.depthBg && depth?.videoWidth ? depth : video
   if (layers.blur) {
     small.width = Math.max(1, Math.round(width / BLUR_DOWNSCALE))
     small.height = Math.max(1, Math.round(height / BLUR_DOWNSCALE))
     const sctx = small.getContext('2d')!
     sctx.filter = 'blur(1px)'
-    sctx.drawImage(video, 0, 0, small.width, small.height)
+    sctx.drawImage(background, 0, 0, small.width, small.height)
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(small, 0, 0, width, height)
-    // Paste the sharp person regions back, in video pixels
+  } else {
+    ctx.drawImage(background, 0, 0, width, height)
+  }
+  if (layers.blur || background !== video) {
+    // Paste the sharp color person regions back, in video pixels
     const vx = video.videoWidth / width
     const vy = video.videoHeight / height
     for (const [x, y, w, h] of rects) ctx.drawImage(video, x * vx, y * vy, w * vx, h * vy, x, y, w, h)
-  } else {
-    ctx.drawImage(video, 0, 0, width, height)
   }
 
   const font = Math.max(12, Math.round(height / 40))
