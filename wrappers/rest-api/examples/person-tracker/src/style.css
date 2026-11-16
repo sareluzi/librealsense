@@ -748,6 +748,199 @@ canvas.taggable {
   font-size: 13px;
 }
 
+/* ---- Data pipeline card ---- */
+.pl {
+  --pl-rgb: #2f97e3;
+  --pl-depth: #ff9500;
+  --pl-imu: #3fb950;
+  --pl-cam: #bf5af2;
+  --pl-host: #64d2ff;
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}
+
+.pl-zone {
+  padding: 8px;
+  border: 1px solid var(--rs-border);
+  border-radius: 10px;
+  background: var(--rs-darker);
+}
+
+.pl-camera {
+  border-color: color-mix(in srgb, var(--pl-cam) 45%, var(--rs-border));
+}
+
+.pl-zone-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--rs-dim);
+}
+
+.pl-layer {
+  padding: 8px 10px;
+  border: 1px solid var(--rs-border);
+  border-left: 3px solid var(--layer, var(--rs-accent));
+  border-radius: 8px;
+  background: var(--rs-inset);
+}
+
+.pl-raw {
+  --layer: var(--pl-rgb);
+}
+
+.pl-cam {
+  --layer: var(--pl-cam);
+}
+
+.pl-host {
+  --layer: var(--pl-host);
+}
+
+.pl-layer h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pl-layer p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.pl-planned {
+  border-style: dashed;
+  border-left-style: dashed;
+  --layer: var(--rs-dim);
+  opacity: 0.75;
+}
+
+.pl-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--rs-border);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--rs-dim);
+  white-space: nowrap;
+}
+
+.pl-soon {
+  border-color: color-mix(in srgb, var(--pl-cam) 60%, transparent);
+  color: var(--pl-cam);
+}
+
+.pl-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  color: var(--rs-muted);
+  transition: opacity 0.3s;
+}
+
+.pl-item .icon {
+  color: var(--layer);
+}
+
+.pl-item b {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--rs-text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pl-item.off {
+  opacity: 0.45;
+}
+
+/* Frames flowing up between the layers: small packets, one lane per stream */
+.pl-flow {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  height: 26px;
+}
+
+.pl-flow span {
+  position: relative;
+  width: 2px;
+  background: var(--rs-border);
+}
+
+.pl-flow span::after {
+  content: '';
+  position: absolute;
+  left: -4px;
+  bottom: 0;
+  width: 10px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--c);
+  box-shadow: 0 0 8px var(--c);
+  opacity: 0;
+}
+
+.pl[data-live='true'] .pl-flow span::after {
+  animation: pl-frame 0.7s linear infinite;
+  animation-delay: var(--d);
+}
+
+@keyframes pl-frame {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  20%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-19px);
+    opacity: 0;
+  }
+}
+
+.pl-link {
+  position: relative;
+}
+
+.pl-link-label {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  font-size: 10.5px;
+  color: var(--rs-dim);
+}
+
+.pl[data-live='false'] .pl-layer:not(.pl-planned) {
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pl[data-live='true'] .pl-flow span::after {
+    animation: none;
+    opacity: 1;
+    bottom: 50%;
+  }
+}
+
 /* Resolution picker, laid out like the sliders */
 .select {
   padding: 14px 0 0;

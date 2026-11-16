@@ -49,6 +49,7 @@
           <button class="toggle" data-toggle="map"><i data-icon="map"></i><span>Top-down map</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="depth"><i data-icon="depth"></i><span>Depth window</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="depthBg" title="Show the camera's aligned depth instead of color outside the person boxes"><i data-icon="depthBg"></i><span>Depth background</span><span class="switch"></span></button>
+          <button class="toggle" data-toggle="pipeline"><i data-icon="layers"></i><span>Data pipeline</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="blur"><i data-icon="blur"></i><span>Privacy blur</span><span class="switch"></span></button>
           <div class="slider">
             <label for="min-score"><i data-icon="target"></i><span>Min confidence</span><output id="min-score-value" for="min-score"></output></label>
@@ -100,6 +101,10 @@
             <p id="depth-empty" class="muted">Starts with the stream</p>
           </div>
           <p id="depth-note" class="muted map-note"></p>
+        </aside>
+        <aside id="pipeline-card" class="map-card" aria-label="Data pipeline">
+          <h2><i data-icon="layers"></i>Data pipeline</h2>
+          <div id="pipeline" class="pl"></div>
         </aside>
       </div>
     </div>

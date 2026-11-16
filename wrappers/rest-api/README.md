@@ -148,9 +148,12 @@ each person, so clicking a box names that person and the name follows them, even
 and come back. Moving persons get a speed and direction arrow, the camera's center-of-mass point of
 each person is marked, and a top-down map shows where everyone is. When the camera has an IMU, the
 page also streams it and warns while the camera itself moves. The depth background (color instead
-of depth when off), and a small depth window are on by default; a privacy blur
+of depth when off), a small depth window and a data pipeline card are on by default; a privacy blur
 of everything outside the persons is off. Color and depth stream at one selectable resolution
-(1280x720 by default). Each layer has a toggle.
+(1280x720 by default). The pipeline card illustrates the layers:
+the camera's raw sensors and on-camera perception, host perception (tracking and velocity, planned to
+move to the camera), and a placeholder for scene understanding, with frames flowing while streaming.
+Each layer has a toggle.
 
 ```bash
 cd examples/person-tracker && npm install && npm run build

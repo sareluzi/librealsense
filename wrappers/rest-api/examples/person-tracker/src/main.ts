@@ -18,6 +18,7 @@ import {
 } from './api'
 import { icon, renderIcons } from './icons'
 import { People } from './people'
+import { Pipeline } from './pipeline'
 import { DISTANCE_BANDS, UNKNOWN_COLOR, drawFrame, drawMap, personAt } from './render'
 
 // Same expiry as realsense-viewer: older detections are dropped, so a stalled detector blurs everything
@@ -56,7 +57,7 @@ function showError(message: string | null) {
 }
 
 // Tracking and velocity run on the server; the others only change what this page draws
-type Toggle = 'blur' | 'depthBg' | 'boxes' | 'stats' | 'com' | 'tracking' | 'velocity' | 'map' | 'depth'
+type Toggle = 'blur' | 'depthBg' | 'boxes' | 'stats' | 'com' | 'tracking' | 'velocity' | 'map' | 'depth' | 'pipeline'
 const toggles: Record<Toggle, boolean> = {
   blur: false,
   depthBg: true,
@@ -67,6 +68,7 @@ const toggles: Record<Toggle, boolean> = {
   velocity: true,
   map: true,
   depth: true,
+  pipeline: true,
 }
 // Bumped when the defaults change, so everyone starts from the new ones
 const TOGGLES_KEY = 'person-tracker-toggles-v2'
@@ -134,7 +136,8 @@ function renderMap(d: Detections | null) {
 function showMap() {
   $('map-card').hidden = !toggles.map
   $('depth-card').hidden = !toggles.depth
-  $('side').hidden = !toggles.map && !toggles.depth
+  $('pipeline-card').hidden = !toggles.pipeline
+  $('side').hidden = !toggles.map && !toggles.depth && !toggles.pipeline
   renderMap(null)
 }
 showMap()
@@ -198,6 +201,7 @@ function showDepthNote(cam: Camera | null, mode: DepthMode) {
 }
 showDepthNote(null, 'none')
 const people = new People(showError)
+const pipeline = new Pipeline($('pipeline'))
 
 // Velocity needs tracking: its toggle is greyed out while tracking is off
 function syncVelocityToggle() {
@@ -307,6 +311,7 @@ async function start(known?: Camera) {
       latest = { d, at: performance.now() }
       showStats(d)
       showCameraMotion(d.camera_moving)
+      pipeline.update(d, toggles)
     })
     const closers: (() => void)[] = []
     try {
@@ -334,6 +339,11 @@ async function start(known?: Camera) {
     await video.play().catch(() => {})
     if (mode !== 'none') await depthVideo.play().catch(() => {})
     setState('streaming', 'Streaming')
+    pipeline.start(cam.name, {
+      color: `${width}×${height} @ ${configs[0].framerate} fps`,
+      depth: mode,
+      imu: configs.some((c) => c.stream_type === 'gyro'),
+    })
     render()
   } catch (e) {
     setState('error', 'Error')
@@ -351,6 +361,7 @@ async function stop() {
   showCameraMotion(null)
   depthVideo.srcObject = null
   showDepthNote(null, 'none')
+  pipeline.idle()
   setState('idle', 'Idle')
   renderMap(null)
   showStats(null)
