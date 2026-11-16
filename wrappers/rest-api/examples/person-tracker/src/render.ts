@@ -9,6 +9,7 @@ import type { ImageInfo, Intrinsics, Person } from './api'
 export interface Layers {
   blur: boolean
   boxes: boolean
+  com: boolean
   velocity: boolean
 }
 
@@ -66,6 +67,7 @@ export function drawFrame(
   persons: Person[],
   image: ImageInfo,
   layers: Layers,
+  cameraMoving = false,
 ) {
   const { width, height } = ctx.canvas
   const sx = width / image.width
@@ -123,7 +125,8 @@ export function drawFrame(
     ctx.fillStyle = '#000'
     ctx.fillText(label, lx + 5 + (dot && dot + 6), ty + font)
   })
-  if (layers.velocity) drawVelocities(ctx, persons, image, font)
+  if (layers.com) drawCentersOfMass(ctx, persons, image)
+  if (layers.velocity) drawVelocities(ctx, persons, image, font, cameraMoving)
 }
 
 const add = (a: number[], b: number[], k: number) => a.map((v, i) => v + b[i] * k)
@@ -153,14 +156,37 @@ function arrow(ctx: CanvasRenderingContext2D, [x1, y1]: number[], [x2, y2]: numb
   ctx.stroke()
 }
 
-/** "1.4 m/s", with "toward" / "away" when most of the motion is along the camera axis. */
-export function speedLabel(v: NonNullable<Person['velocity']>) {
+/** "1.4 m/s", with "toward" / "away" when most of the motion is along the camera axis, "relative" while the camera moves. */
+export function speedLabel(v: NonNullable<Person['velocity']>, relative = false) {
   const along = Math.abs(v.vz) > 0.7 * v.speed_mps ? (v.vz < 0 ? ' · toward' : ' · away') : ''
-  return `${v.speed_mps.toFixed(1)} m/s${along}`
+  return `${v.speed_mps.toFixed(1)} m/s${along}${relative ? ' · relative' : ''}`
+}
+
+/** The camera's center-of-mass point of each person: a glowing dot ringed in the box color. */
+function drawCentersOfMass(ctx: CanvasRenderingContext2D, persons: Person[], image: ImageInfo) {
+  const sx = ctx.canvas.width / image.width
+  const sy = ctx.canvas.height / image.height
+  const r = Math.max(5, ctx.canvas.height / 110)
+  ctx.save()
+  for (const p of persons) {
+    if (!p.com_px) continue
+    const [x, y] = [p.com_px[0] * sx, p.com_px[1] * sy]
+    ctx.shadowColor = '#fff'
+    ctx.shadowBlur = r * 2.5
+    ctx.beginPath()
+    ctx.arc(x, y, r, 0, 2 * Math.PI)
+    ctx.fillStyle = '#fff'
+    ctx.fill()
+    ctx.shadowBlur = 0
+    ctx.lineWidth = Math.max(2, r / 2.5)
+    ctx.strokeStyle = distanceColor(p.distance_m)
+    ctx.stroke()
+  }
+  ctx.restore()
 }
 
 /** Velocity arrows of moving persons, from their (filtered) position to where they will be. */
-function drawVelocities(ctx: CanvasRenderingContext2D, persons: Person[], image: ImageInfo, font: number) {
+function drawVelocities(ctx: CanvasRenderingContext2D, persons: Person[], image: ImageInfo, font: number, relative: boolean) {
   const intr = image.intrinsics
   if (!intr) return
   const sx = ctx.canvas.width / image.width
@@ -176,7 +202,7 @@ function drawVelocities(ctx: CanvasRenderingContext2D, persons: Person[], image:
     const from = [a[0] * sx, a[1] * sy]
     const to = [b[0] * sx, b[1] * sy]
     arrow(ctx, from, to, lw)
-    const label = speedLabel(v)
+    const label = speedLabel(v, relative)
     const tw = ctx.measureText(label).width + 10
     const lx = Math.max(0, Math.min(to[0] + 6, ctx.canvas.width - tw))
     const ly = Math.max(0, to[1] - font - 4)

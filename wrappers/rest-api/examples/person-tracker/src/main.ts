@@ -42,8 +42,16 @@ function showError(message: string | null) {
 }
 
 // Tracking and velocity run on the server; the others only change what this page draws
-type Toggle = 'blur' | 'boxes' | 'stats' | 'tracking' | 'velocity' | 'map'
-const toggles: Record<Toggle, boolean> = { blur: true, boxes: true, stats: true, tracking: true, velocity: true, map: true }
+type Toggle = 'blur' | 'boxes' | 'stats' | 'com' | 'tracking' | 'velocity' | 'map'
+const toggles: Record<Toggle, boolean> = {
+  blur: true,
+  boxes: true,
+  stats: true,
+  com: true,
+  tracking: true,
+  velocity: true,
+  map: true,
+}
 try {
   Object.assign(toggles, JSON.parse(localStorage.getItem('person-tracker-toggles') ?? '{}'))
 } catch {
@@ -161,6 +169,21 @@ canvas.onclick = (e) => {
   people.openTagger(p.track_id!, p.name, { x: e.clientX - v.left, y: e.clientY - v.top })
 }
 
+// Camera movement, from the IMU: a toast while it moves, and a status line under the camera
+let cameraMoving: boolean | null = null
+let toastTimer = 0
+function showCameraMotion(moving: boolean | null) {
+  if (moving === cameraMoving) return
+  cameraMoving = moving
+  const imu = $('imu')
+  imu.hidden = moving === null
+  imu.dataset.state = moving ? 'moving' : 'steady'
+  $('imu-text').textContent = moving ? 'Camera moving: speeds are relative' : 'Camera steady (IMU)'
+  clearTimeout(toastTimer)
+  if (moving) $('toast').hidden = false
+  else toastTimer = window.setTimeout(() => ($('toast').hidden = true), 1500)
+}
+
 const fmt = (m: number | null) => (m === null ? '–' : `${m.toFixed(2)} m`)
 const chip = (name: Parameters<typeof icon>[0], label: string, value: string) =>
   `<span class="chip">${icon(name, 16)}<small>${label}</small><strong>${value}</strong></span>`
@@ -183,7 +206,7 @@ function render() {
     }
     const fresh = freshDetections()
     const image = fresh?.image ?? { width: canvas.width, height: canvas.height }
-    drawFrame(ctx, video, fresh?.persons ?? [], image, toggles)
+    drawFrame(ctx, video, fresh?.persons ?? [], image, toggles, cameraMoving === true)
     if (toggles.map) renderMap(fresh)
     if (!fresh) showStats(null)
   }
@@ -205,6 +228,7 @@ async function start() {
     const unsubscribe = onDetections(cam.deviceId, (d) => {
       latest = { d, at: performance.now() }
       showStats(d)
+      showCameraMotion(d.camera_moving)
     })
     let closeVideo: () => void
     try {
@@ -239,6 +263,7 @@ async function stop() {
   latest = null
   close()
   people.follow(null)
+  showCameraMotion(null)
   setState('idle', 'Idle')
   renderMap(null)
   showStats(null)

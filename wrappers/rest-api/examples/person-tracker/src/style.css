@@ -644,3 +644,56 @@ canvas.taggable {
   margin: 0 auto 14px;
   filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.55));
 }
+
+/* ---- Camera movement (IMU) ---- */
+.imu {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--rs-ok);
+}
+
+.imu[data-state='moving'] {
+  color: var(--rs-warn);
+}
+
+.toast {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--rs-warn) 60%, transparent);
+  background: color-mix(in srgb, var(--rs-dark) 88%, var(--rs-warn));
+  color: var(--rs-text);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  transform: translateX(-50%);
+  animation: toast-in 0.25s ease-out;
+}
+
+.toast .icon {
+  color: var(--rs-warn);
+}
+
+.toast b {
+  display: block;
+  font-size: 14px;
+}
+
+.toast span {
+  font-size: 13px;
+  color: var(--rs-muted);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+}

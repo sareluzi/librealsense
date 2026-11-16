@@ -1658,6 +1658,8 @@ class RealSenseManager:
                                         "y": float(motion_data.y),
                                         "z": float(motion_data.z),
                                     }
+                                    self.person_analytics.on_motion(
+                                        device_id, rs_stream.name, list(motion_json_data.values()))
                                     # Placeholder frame; viewers draw motion from metadata["motion_data"]
                                     frame = np.zeros((120, 320, 3), dtype=np.uint8)
                             elif rs_stream == rs.stream.object_detection:
@@ -1900,6 +1902,7 @@ class RealSenseManager:
                 "y": float(motion_data.y),
                 "z": float(motion_data.z),
             }
+            self.person_analytics.on_motion(device_id, stream.name, list(metadata["motion_data"].values()))
             processed_frame = np.zeros((120, 320, 3), dtype=np.uint8)
 
         elif stream == rs.stream.object_detection:

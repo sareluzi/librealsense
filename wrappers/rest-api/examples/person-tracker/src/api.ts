@@ -11,7 +11,8 @@ export interface Person {
   bbox: [number, number, number, number] // x1, y1, x2, y2 in color-image pixels
   score: number
   distance_m: number | null
-  world: [number, number, number] | null
+  world: [number, number, number] | null // the camera's 3D center of mass, m
+  com_px: [number, number] | null // ... and its pixel in the color image
   track_id: number | null // null until the track is confirmed, or with tracking off
   name: string | null
   velocity: Velocity | null // null until settled, or with tracking or velocity off
@@ -22,7 +23,7 @@ export interface Velocity {
   vx: number
   vy: number
   vz: number
-  speed_mps: number // on the floor plane
+  speed_mps: number // 3D: |(vx, vy, vz)|
   heading_deg: number // 0 = away from the camera, 90 = to its right, 180 = toward it
   moving: boolean
 }
@@ -61,6 +62,7 @@ export interface Detections {
   image: ImageInfo | null
   persons: Person[]
   stats: { count: number; min_m: number | null; max_m: number | null; avg_m: number | null }
+  camera_moving: boolean | null // from the IMU; null without one
 }
 
 interface Profile {
@@ -117,17 +119,20 @@ export async function findCamera(): Promise<{ deviceId: string; name: string; co
     }
     const od = pick('object_detection')
     const color = pick('color')
+    // The IMU, at its lowest rates: enough to tell that the camera moves
+    const imu = (type: string) => pick(type)?.profiles.reduce((a, b) => (b.fps < a.fps ? b : a))
+    const gyro = imu('gyro')
+    const accel = imu('accel')
     if (!od || !color) continue
     const odProfile = od.profiles.reduce((a, b) => (b.fps > a.fps ? b : a))
     // RGB8 at the OD rate, the largest one no wider than 1280 so the blur stays cheap
     const rgb = color.profiles.filter((p) => p.format.toLowerCase() === 'rgb8' && p.fps === odProfile.fps)
     const colorProfile = rgb.filter((p) => p.width <= 1280).sort((a, b) => b.width - a.width)[0] ?? rgb[0]
     if (!colorProfile) continue
-    return {
-      deviceId: dev.device_id,
-      name: dev.name,
-      configs: [toConfig(color.sensor.sensor_id, colorProfile), toConfig(od.sensor.sensor_id, odProfile)],
-    }
+    const configs = [toConfig(color.sensor.sensor_id, colorProfile), toConfig(od.sensor.sensor_id, odProfile)]
+    if (gyro && accel)
+      configs.push(toConfig(pick('gyro')!.sensor.sensor_id, gyro), toConfig(pick('accel')!.sensor.sensor_id, accel))
+    return { deviceId: dev.device_id, name: dev.name, configs }
   }
   throw new Error('No connected camera has an object detection stream')
 }

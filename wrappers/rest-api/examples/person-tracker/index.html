@@ -30,6 +30,7 @@
               <div id="device-detail" class="muted">Press play to find a camera with person detection</div>
             </div>
           </div>
+          <div id="imu" class="imu" data-state="none" hidden><i data-icon="move" data-size="15"></i><span id="imu-text"></span></div>
           <div id="error" class="error" hidden></div>
         </section>
 
@@ -39,6 +40,7 @@
           <button class="toggle" data-toggle="boxes"><i data-icon="boxes"></i><span>Person boxes</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="stats"><i data-icon="stats"></i><span>Distance stats</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="tracking"><i data-icon="tracking"></i><span>Tracking &amp; names</span><span class="switch"></span></button>
+          <button class="toggle" data-toggle="com"><i data-icon="com"></i><span>Center of mass</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="velocity"><i data-icon="velocity"></i><span>Speed &amp; direction</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="map"><i data-icon="map"></i><span>Top-down map</span><span class="switch"></span></button>
           <div class="slider">
@@ -86,6 +88,11 @@
         <canvas id="map"></canvas>
         <p class="muted map-note">Camera at the bottom; rings every meter. Arrows show where people will be in 1 s.</p>
       </aside>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+      <i data-icon="move" data-size="20"></i>
+      <div><b>Camera movement detected</b><span>Person speeds are relative to the moving camera.</span></div>
     </div>
 
     <video id="video" muted playsinline hidden></video>

@@ -145,30 +145,36 @@ For more details about the React viewer features and development, see `tools/rea
 detection (e.g. D585). It shows the color stream, keeps detected persons sharp and blurs the rest,
 colors each box by distance and shows count / min / max / average distance. The server also tracks
 each person, so clicking a box names that person and the name follows them, even after they leave
-and come back. Moving persons get a speed and direction arrow, and a top-down map shows where
-everyone is. Each layer has a toggle.
+and come back. Moving persons get a speed and direction arrow, the camera's center-of-mass point of
+each person is marked, and a top-down map shows where everyone is. When the camera has an IMU, the
+page also streams it and warns while the camera itself moves. Each layer has a toggle.
 
 ```bash
 cd examples/person-tracker && npm install && npm run build
 ```
 
 The server serves the build at `http://localhost:8000/samples/person-tracker/` (restart it after
-the first build). The page starts color + `object_detection` with `POST /devices/{id}/stream/start`,
+the first build). The page starts color + `object_detection` (+ `gyro` and `accel` when present) with
+`POST /devices/{id}/stream/start`,
 plays color over WebRTC and draws the server's `person_detections` Socket.IO events, sent once per
 detection frame:
 
 ```json
 { "device_id": "...", "od_frame_number": 165, "color_frame_number": 230,
   "image": {"width": 1280, "height": 960},
+  "camera_moving": false,
   "persons": [{"bbox": [688, 314, 993, 693], "score": 85, "distance_m": 1.26, "world": [0.55, -0.23, 1.11],
+               "com_px": [842.0, 401.3],
                "track_id": 4, "name": "Alice",
                "velocity": {"position": [0.55, -0.23, 1.11], "vx": 0.9, "vy": 0.0, "vz": -0.4,
                             "speed_mps": 0.98, "heading_deg": 114.0, "moving": true}}],
   "stats": {"count": 1, "min_m": 1.26, "max_m": 1.26, "avg_m": 1.26} }
 ```
 
-Boxes are in color-image pixels. `world` is the camera-frame position in meters, `null` when the
-camera reports none. The server keeps persons only and drops overlapping boxes the same way
+Boxes are in color-image pixels. `world` is the camera's 3D center of mass of the person in meters
+(camera frame) and `com_px` its color-image pixel, both `null` when the camera reports none.
+`camera_moving` comes from the camera's gyro and accelerometer: `true` while it turns, shakes or is
+carried (person velocities are then relative to the camera), `null` without IMU data. The server keeps persons only and drops overlapping boxes the same way
 realsense-viewer does. Tune that with `GET/PUT /devices/{id}/person-analytics/config`.
 
 Tracking (`"tracking": true` in that config, the default) matches each detection to a person by
@@ -181,9 +187,10 @@ are recognized again after a restart. List and forget them with `GET .../identit
 
 `velocity` (`"velocity": true` in the config, the default; needs tracking) comes from a Kalman
 filter on each tracked person's 3D position, timed by the camera's frame timestamps. It is `null`
-for the first few frames of a track. `position` is the filtered position, `speed_mps` and
-`heading_deg` are on the floor plane (0° = away from the camera, 90° = to its right), and
-`moving` is false below 0.2 m/s. One-frame position glitches from the camera are ignored.
+for the first few frames of a track. The filter runs on the full 3D position (the center of mass
+above, or the box center at the camera's distance when there is none): `position` is the filtered
+position, `vx`/`vy`/`vz` the 3D velocity and `speed_mps` its magnitude. `heading_deg` is on the floor
+plane (0° = away from the camera, 90° = to its right), and `moving` is false below 0.2 m/s. One-frame position glitches from the camera are ignored.
 `image.intrinsics` gives the color camera's focal lengths and principal point for drawing the
 vectors on the image.
 

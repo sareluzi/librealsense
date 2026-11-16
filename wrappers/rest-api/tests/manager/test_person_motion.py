@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from app.services import person_motion as pm
-from app.services.person_motion import Motion
+from app.services.person_motion import CameraMotion, Motion
 
 FPS = 30
 
@@ -41,8 +41,11 @@ def test_standing_still_with_noise_is_not_moving():
     assert not v["moving"] and v["speed_mps"] < pm.STILL_MPS
 
 
-def test_vertical_motion_is_not_walking():
-    assert walk((0.0, 0.5, 0.0), noise=0.0)["speed_mps"] == pytest.approx(0.0, abs=0.01)
+def test_speed_is_3d():
+    v = walk((0.6, 0.0, 0.8), noise=0.0)
+    assert v["speed_mps"] == pytest.approx(1.0, abs=0.02)
+    v = walk((0.0, 0.5, 0.0), noise=0.0)  # straight up or down counts too
+    assert v["speed_mps"] == pytest.approx(0.5, abs=0.02) and v["vy"] == pytest.approx(0.5, abs=0.02)
 
 
 def test_reported_only_once_settled_and_restarted_after_a_gap():
@@ -66,3 +69,45 @@ def test_a_one_frame_glitch_is_ignored_but_a_lasting_jump_restarts():
     for i in range(32, 32 + pm.MAX_JUMPS):
         m.update([2, 0, 3], i / FPS)  # really somewhere else now
     assert m.updates == 1 and m.velocity() is None
+
+
+
+def imu(camera, gyro=(0.004, -0.002, 0.001), accel=(1.1, -9.65, -1.6), seconds=2.0, start=0.0):
+    """Feed the IMU at 200 Hz from `start`; returns the end time."""
+    t = start
+    for i in range(int(seconds * 200)):
+        t = start + i / 200
+        camera.on_gyro(gyro, t)
+        camera.on_accel(accel, t)
+    return t
+
+
+def test_camera_at_rest_is_not_moving():
+    c = CameraMotion()
+    assert c.moving(0.0) is None  # no IMU yet
+    t = imu(c)
+    assert c.moving(t) is False
+
+
+def test_camera_turning_or_carried_is_moving_then_settles():
+    c = CameraMotion()
+    t = imu(c)
+    t = imu(c, gyro=(0.0, 0.3, 0.0), seconds=0.5, start=t)  # panning at ~17 deg/s
+    assert c.moving(t) is True
+    t = imu(c, seconds=pm.MOVING_HOLD_S + 0.5, start=t)
+    assert c.moving(t) is False
+    t = imu(c, accel=(1.1, -9.65 + 1.0, -1.6), seconds=0.2, start=t)  # lifted
+    assert c.moving(t) is True
+
+
+def test_camera_tilted_to_a_new_rest_settles():
+    c = CameraMotion()
+    t = imu(c)
+    t = imu(c, accel=(3.3, -9.2, -1.6), seconds=pm.GRAVITY_TAU_S * 6, start=t)  # new orientation, at rest
+    assert c.moving(t) is False
+
+
+def test_imu_silence_is_unknown():
+    c = CameraMotion()
+    t = imu(c)
+    assert c.moving(t + pm.IMU_TIMEOUT_S + 0.1) is None

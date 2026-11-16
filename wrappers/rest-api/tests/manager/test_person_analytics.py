@@ -80,7 +80,10 @@ def test_read_persons_world_position_when_com_valid():
     d = _det([0, 0, 10, 10])
     d.center_of_mass_valid = 1
     d.world_position = SimpleNamespace(x=0.1, y=-0.2, z=2.5)
-    assert read_persons(_OdFrame([d]))[0]["world"] == pytest.approx([0.1, -0.2, 2.5])
+    d.center_of_mass_x, d.center_of_mass_y = 5.0, 4.5
+    p = read_persons(_OdFrame([d]))[0]
+    assert p["world"] == pytest.approx([0.1, -0.2, 2.5]) and p["com_px"] == [5.0, 4.5]
+    assert read_persons(_OdFrame([_det([0, 0, 10, 10])]))[0]["com_px"] is None
 
 
 def test_suppress_drops_low_scores_and_overlaps_keeping_highest():
@@ -197,3 +200,15 @@ def test_velocity_off_in_config():
     pa.set_config("dev", PersonAnalyticsConfig(velocity=False))
     p = _walk_past(pa)["persons"][0]
     assert p["track_id"] is not None and p["velocity"] is None
+
+
+
+def test_camera_moving_from_imu():
+    pa = PersonAnalytics(MagicMock())
+    assert pa.on_od_frame("dev", _OdFrame([], frame_number=1), None)["camera_moving"] is None
+    for _ in range(10):
+        pa.on_motion("dev", "gyro", [0.0, 0.0, 0.0])
+        pa.on_motion("dev", "accel", [0.0, -9.8, 0.0])
+    assert pa.on_od_frame("dev", _OdFrame([], frame_number=2), None)["camera_moving"] is False
+    pa.on_motion("dev", "gyro", [0.0, 0.5, 0.0])
+    assert pa.on_od_frame("dev", _OdFrame([], frame_number=3), None)["camera_moving"] is True

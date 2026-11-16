@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 
 from app.models.person_analytics import PersonAnalyticsConfig
+from app.services.person_motion import CameraMotion
 from app.services.person_tracker import IdentityStore, PersonTracker, appearance, iou
 
 PERSON_CLASS_ID = 0
@@ -30,15 +31,17 @@ def read_persons(od_frame: Any) -> List[Dict[str, Any]]:
         if d.class_id != PERSON_CLASS_ID:
             continue
         # world_position/center_of_mass_* exist only in newer pyrealsense2 builds
-        world = None
+        world = com = None
         if getattr(d, "center_of_mass_valid", 0):
             w = d.world_position
             world = [float(w.x), float(w.y), float(w.z)]
+            com = [float(d.center_of_mass_x), float(d.center_of_mass_y)]
         persons.append({
             "bbox": [d.top_left_x, d.top_left_y, d.bottom_right_x, d.bottom_right_y],
             "score": d.score,
             "distance_m": float(d.depth) if d.depth > 0 else None,
-            "world": world,
+            "world": world,  # the camera's 3D center of mass, m
+            "com_px": com,   # ... and its pixel in the color image
         })
     return persons
 
@@ -83,6 +86,7 @@ class PersonAnalytics:
         self._configs: Dict[str, PersonAnalyticsConfig] = {}
         self._identities = IdentityStore(identities_file)
         self._trackers: Dict[str, PersonTracker] = {}
+        self._camera_motion: Dict[str, CameraMotion] = {}
         self._images: Dict[str, Dict[str, Any]] = {}  # last color size and intrinsics; OD may come without color
         self._last_od_numbers: Dict[str, int] = {}
 
@@ -110,6 +114,11 @@ class PersonAnalytics:
         found = [t.forget(name) for t in trackers]  # each drops the name from its tracks
         return self._identities.delete(name) or any(found)
 
+    def on_motion(self, device_id: str, stream: str, xyz: List[float]) -> None:
+        """One IMU sample ("gyro" or "accel"); feeds the camera-movement detector."""
+        motion = self._camera_motion.setdefault(device_id, CameraMotion())
+        (motion.on_gyro if stream == "gyro" else motion.on_accel)(xyz, time.monotonic())
+
     def on_od_frame(self, device_id: str, od_frame: Any, color_frame: Optional[Any]) -> Optional[Dict[str, Any]]:
         """Process one OD frame (with its matching color frame, if any) and emit the result."""
         # The pipeline syncer hands the same OD frame out again with the next color frame
@@ -127,7 +136,11 @@ class PersonAnalytics:
             "image": None,
             "persons": persons,
             "stats": distance_stats(persons),
+            # True while the camera itself moves (velocities are then relative to it), None without IMU
+            "camera_moving": None,
         }
+        if device_id in self._camera_motion:
+            payload["camera_moving"] = self._camera_motion[device_id].moving(time.monotonic())
         image = None
         if color_frame:
             vf = color_frame.as_video_frame()

@@ -1,10 +1,13 @@
 # License: Apache 2.0. See LICENSE file in root directory.
 # Copyright(c) 2026 RealSense, Inc. All Rights Reserved.
 
-"""Velocity of a tracked person: a constant-velocity Kalman filter on their 3D position.
+"""Velocity of a tracked person, and whether the camera itself is moving.
 
-Positions are in camera coordinates (meters; x right, y down, z forward) and times come from the
-camera's frame timestamps, so network or processing jitter does not show up as speed.
+Motion: a constant-velocity Kalman filter on a person's 3D position (x, y and z). Positions are in
+camera coordinates (meters; x right, y down, z forward) and times come from the camera's frame
+timestamps, so network or processing jitter does not show up as speed.
+
+CameraMotion: from the camera's IMU. While the camera moves, person velocities are relative to it.
 """
 
 import math
@@ -16,7 +19,7 @@ POSITION_STD_M = 0.08   # measurement noise of the camera's person position
 ACCEL_STD = 3.0         # how hard people speed up, turn or stop (m/s^2)
 MAX_GAP_S = 1.0         # a longer gap (person was gone) restarts the filter
 MIN_UPDATES = 8         # updates before the velocity is reported
-STILL_MPS = 0.2         # ground speed below which a person counts as standing still
+STILL_MPS = 0.2         # speed below which a person counts as standing still
 JUMP_M = 0.4            # a position farther than this (+ MAX_SPEED_MPS * dt) from the prediction is a glitch
 MAX_SPEED_MPS = 3.0
 MAX_JUMPS = 3           # this many glitches in a row: the person really is elsewhere, restart
@@ -66,12 +69,54 @@ class Motion:
         if self.updates < MIN_UPDATES:
             return None
         vx, vy, vz = (float(v) for v in self._vel)
-        speed = math.hypot(vx, vz)  # on the floor plane: bobbing up and down is not walking
+        speed = math.sqrt(vx * vx + vy * vy + vz * vz)
         return {
             "position": [round(float(p), 3) for p in self._pos],
             "vx": round(vx, 3), "vy": round(vy, 3), "vz": round(vz, 3),
             "speed_mps": round(speed, 3),
-            # 0 = straight away from the camera, 90 = to its right, 180 = toward it
+            # On the floor plane: 0 = straight away from the camera, 90 = to its right, 180 = toward it
             "heading_deg": round(math.degrees(math.atan2(vx, vz)), 1),
             "moving": speed >= STILL_MPS,
         }
+
+
+GYRO_MOVING_RADPS = 0.06   # turning faster than ~3.4 deg/s
+ACCEL_MOVING_MPS2 = 0.3    # acceleration beyond the slowly tracked gravity vector
+GRAVITY_TAU_S = 1.0        # how fast the gravity estimate follows a new resting orientation
+MOVING_HOLD_S = 1.0        # still reported as moving this long after the last sign of motion
+IMU_TIMEOUT_S = 1.0        # no IMU sample for this long: unknown
+
+
+class CameraMotion:
+    """Whether the camera itself turns, shakes or is carried, from its gyro and accelerometer."""
+
+    def __init__(self):
+        self._gravity: Optional[np.ndarray] = None
+        self._last_accel = 0.0
+        self._last_sample = -math.inf
+        self._last_motion = -math.inf
+
+    def on_gyro(self, xyz: Sequence[float], t: float) -> None:
+        """Angular velocity (rad/s) at time `t` (s)."""
+        self._last_sample = t
+        if np.linalg.norm(xyz) > GYRO_MOVING_RADPS:
+            self._last_motion = t
+
+    def on_accel(self, xyz: Sequence[float], t: float) -> None:
+        """Acceleration (m/s^2, gravity included) at time `t` (s)."""
+        a = np.asarray(xyz, dtype=float)
+        self._last_sample = t
+        if self._gravity is None:
+            self._gravity, self._last_accel = a, t
+            return
+        k = min(1.0, max(0.0, t - self._last_accel) / GRAVITY_TAU_S)
+        self._last_accel = t
+        if np.linalg.norm(a - self._gravity) > ACCEL_MOVING_MPS2:
+            self._last_motion = t
+        self._gravity = self._gravity + k * (a - self._gravity)
+
+    def moving(self, t: float) -> Optional[bool]:
+        """True while the camera moves (and briefly after), None without recent IMU data."""
+        if t - self._last_sample > IMU_TIMEOUT_S:
+            return None
+        return t - self._last_motion <= MOVING_HOLD_S
