@@ -55,6 +55,15 @@ export interface AnalyticsConfig {
   tracking: boolean
   velocity: boolean
   smoothing: boolean
+  detection: 'camera' | 'host'
+  host_device: string
+}
+
+/** Whether the server can detect persons itself (ONNX Runtime + the camera's model), and on which devices. */
+export interface HostDetection {
+  available: boolean
+  devices: string[]
+  reason: string | null
 }
 
 export interface Detections {
@@ -65,6 +74,9 @@ export interface Detections {
   persons: Person[]
   stats: { count: number; min_m: number | null; max_m: number | null; avg_m: number | null }
   camera_moving: boolean | null // from the IMU; null without one
+  source?: 'camera' | 'host' // who detected the persons
+  host_device?: string
+  host_detection_ms?: number // model + distance + center of mass, per frame
 }
 
 interface Profile {
@@ -118,7 +130,8 @@ export interface Camera {
   resolutions: Resolution[] // color sizes at the OD rate (that depth also has, when there is depth), largest first
   hasDepth: boolean
   alignSensorId: string | null // the sensor with on-camera depth-to-color alignment, if any
-  streams: (res: Resolution, depth: boolean) => StreamConfig[] // color, OD, the IMU when present, and depth if asked
+  // color, the IMU when present, and depth / the camera's object detection if asked
+  streams: (res: Resolution, depth: boolean, od: boolean) => StreamConfig[]
 }
 
 /** First camera with an object detection stream, and the streams to start on it. */
@@ -165,9 +178,9 @@ export async function findCamera(): Promise<Camera> {
       resolutions,
       hasDepth: z16.length > 0,
       alignSensorId,
-      streams: (res, withDepth) => [
+      streams: (res, withDepth, withOd) => [
         toConfig(color.sensor.sensor_id, rgb.find(same(res))!),
-        toConfig(od.sensor.sensor_id, odProfile),
+        ...(withOd ? [toConfig(od.sensor.sensor_id, odProfile)] : []),
         ...(imu.every(Boolean) ? (imu as StreamConfig[]) : []),
         ...(withDepth && depth ? [toConfig(depth.sensor.sensor_id, z16.find(same(res))!)] : []),
       ],
@@ -176,8 +189,24 @@ export async function findCamera(): Promise<Camera> {
   throw new Error('No connected camera has an object detection stream')
 }
 
-export const startStream = (deviceId: string, configs: StreamConfig[]) =>
-  request('POST', `/devices/${deviceId}/stream/start`, { configs })
+/** The server process's share of the host; null where the machine cannot measure it. */
+export interface Usage {
+  cpu_percent: number | null // % of the whole machine
+  system_cpu_percent: number | null
+  cpu_cores: number | null
+  memory_mb: number | null
+  gpu_percent: number | null
+  npu_percent: number | null
+  perception_cpu_percent: number | null // the part of cpu_percent spent on host person processing
+  detection_cpu_percent: number | null // ... detecting persons on the host
+  alignment_cpu_percent: number | null // ... aligning depth to color on the host
+}
+
+export const getUsage = () => request<Usage>('GET', '/system/usage')
+
+/** Start the streams; alignTo has the server align the other streams to that one (e.g. depth to 'color'). */
+export const startStream = (deviceId: string, configs: StreamConfig[], alignTo?: string) =>
+  request('POST', `/devices/${deviceId}/stream/start`, { configs, align_to: alignTo ?? null })
 
 /** Turn the camera's own depth-to-color alignment on or off; only possible while depth is stopped. */
 export const setAlignedDepth = (deviceId: string, sensorId: string, on: boolean) =>
@@ -191,6 +220,9 @@ export const getConfig = (deviceId: string) => request<AnalyticsConfig>('GET', `
 
 export const setConfig = (deviceId: string, config: AnalyticsConfig) =>
   request<AnalyticsConfig>('PUT', `${analytics(deviceId)}/config`, config)
+
+export const getHostDetection = (deviceId: string) =>
+  request<HostDetection>('GET', `${analytics(deviceId)}/host-detection`)
 
 export const getTracks = (deviceId: string) => request<Track[]>('GET', `${analytics(deviceId)}/tracks`)
 

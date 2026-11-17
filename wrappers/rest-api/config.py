@@ -24,5 +24,8 @@ class Settings():
 
     # Named persons of the person tracker sample, kept across server restarts
     PERSON_IDENTITIES_FILE: Path = Path.home() / ".realsense" / "person-tracker-identities.json"
+    # The camera's person detection model, for detecting on the host instead (optional)
+    PERSON_DETECTOR_MODEL: Path = (Path.home() / ".realsense" / "models"
+                                   / "damo-epoch233-mean_ap0.668_inp_416_batch_1_bench.onnx")
 
 settings = Settings()

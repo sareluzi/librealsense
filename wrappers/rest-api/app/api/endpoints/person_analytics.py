@@ -6,7 +6,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.dependencies import get_realsense_manager
-from app.models.person_analytics import PersonAnalyticsConfig, TrackInfo, TrackName
+from app.models.person_analytics import HostDetectionStatus, PersonAnalyticsConfig, TrackInfo, TrackName
 from app.services.rs_manager import RealSenseManager
 
 router = APIRouter()
@@ -25,7 +25,18 @@ async def set_config(
     rs_manager: RealSenseManager = Depends(get_realsense_manager),
 ):
     rs_manager.get_device(device_id)
+    if config.detection == "host":
+        status = rs_manager.person_analytics.host_detection_status()
+        if not status["available"] or config.host_device not in status["devices"]:
+            raise HTTPException(status_code=400, detail=status["reason"] or f"No {config.host_device} for host detection")
     return rs_manager.person_analytics.set_config(device_id, config)
+
+
+@router.get("/host-detection", response_model=HostDetectionStatus)
+async def get_host_detection(device_id: str, rs_manager: RealSenseManager = Depends(get_realsense_manager)):
+    """Whether persons can be detected on this host instead of the camera (ONNX Runtime + the model), and on what."""
+    rs_manager.get_device(device_id)
+    return rs_manager.person_analytics.host_detection_status()
 
 
 @router.get("/tracks", response_model=List[TrackInfo])

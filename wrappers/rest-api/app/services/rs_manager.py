@@ -21,6 +21,7 @@ import socketio
 
 from app.services.metadata_socket_server import MetadataSocketServer
 from app.services.person_analytics import PersonAnalytics
+from app.services.system_usage import SystemUsage
 from app.core.config import get_settings
 from app.services import firmware as fw
 
@@ -116,7 +117,12 @@ class RealSenseManager:
 
         self.sio = sio
         self.metadata_socket_server = MetadataSocketServer(sio, self)
-        self.person_analytics = PersonAnalytics(self._emit_socket_event, get_settings().PERSON_IDENTITIES_FILE)
+        self.person_analytics = PersonAnalytics(self._emit_socket_event, get_settings().PERSON_IDENTITIES_FILE,
+                                                get_settings().PERSON_DETECTOR_MODEL)
+        self.align_busy_s = 0.0  # host CPU time spent aligning depth to color, for the usage report
+        self.system_usage = SystemUsage(lambda: {"perception": self.person_analytics.busy_s,
+                                                 "detection": self.person_analytics.detection_busy_s,
+                                                 "alignment": self.align_busy_s})
 
         # --- Per-Sensor Streaming State (Sensor API) ---
         # Tracks which mode each device is using: "pipeline", "sensor", or "idle"
@@ -1213,6 +1219,7 @@ class RealSenseManager:
 
         try:
             self.metadata_socket_server.stop_broadcast(device_id)
+            self.person_analytics.stop_host(device_id)
             self.pipelines[device_id].stop()
         except Exception as e:
             logging.error("Failed to stop streaming for %s: %s", device_id, e)
@@ -1610,7 +1617,12 @@ class RealSenseManager:
                     
                     # Apply alignment if requested
                     if align_processor:
+                        start = time.thread_time()
                         frames = align_processor.process(frames)
+                        self.align_busy_s += time.thread_time() - start
+                    if self.person_analytics.wants_host_frames(device_id) and frames.get_color_frame():
+                        self.person_analytics.on_host_frame(device_id, frames.get_color_frame(),
+                                                            frames.get_depth_frame() or None)
 
                     # Process frames outside the lock for better performance
                     processed_frames = {}

@@ -9,7 +9,10 @@ import { icon, type IconName } from './icons'
 
 export interface PipelineSetup {
   color: string // "1280×720 @ 30 fps"
-  depth: 'none' | 'raw' | 'aligned'
+  depth: 'none' | 'aligned'
+  align: 'camera' | 'host' // where depth is aligned to color
+  detect: 'camera' | 'host' // where persons are detected, with their distance and center of mass
+  device: string // host device for detection on the host
   imu: boolean
 }
 
@@ -32,6 +35,13 @@ const MARKUP = `
       <h3>Host perception<span class="pl-badge pl-soon" title="These run on the host today and will move to on-camera compute in later versions">${icon('upload', 12)}To camera later</span></h3>
       ${item('tracking', 'tracking', 'Tracking &amp; re-ID')}
       ${item('velocity', 'velocity', '3D velocity')}
+    </div>
+    <div class="pl-layer pl-moved" id="pl-moved" hidden>
+      <h3>Moved from the camera<span class="pl-badge pl-load" title="Running on the host to show the load the camera takes off it">Host load</span></h3>
+      ${item('h-align', 'depth', 'Depth alignment')}
+      ${item('h-detect', 'boxes', 'Person detection')}
+      ${item('h-com', 'com', 'Center of mass')}
+      ${item('h-distance', 'ruler', 'Distance')}
     </div>
   </div>
   <div class="pl-link">${flow(['var(--pl-cam)', 'var(--pl-cam)'])}<span class="pl-link-label">USB · detections + frames</span></div>
@@ -73,6 +83,19 @@ export class Pipeline {
     this.times = []
     this.root.dataset.live = 'false'
     for (const id of ['rgb', 'depth', 'imu', 'detect', 'com', 'distance', 'tracking', 'velocity']) this.set(id, 'Idle', false)
+    this.show({ align: 'camera', detect: 'camera' })
+  }
+
+  /** Show each moved stage in the host's "Moved from the camera" layer, and leave a placeholder on the camera. */
+  private show(at: { align: string; detect: string }) {
+    const host = at.detect === 'host'
+    const el = (id: string) => this.root.querySelector<HTMLElement>(`#pl-${id}`)!
+    el('moved').hidden = !host && at.align !== 'host'
+    el('h-align').hidden = at.align !== 'host'
+    for (const id of ['detect', 'com', 'distance']) {
+      el(`h-${id}`).hidden = !host
+      if (host) this.set(id, 'On host', false)
+    }
   }
 
   start(cameraName: string, setup: PipelineSetup) {
@@ -80,8 +103,11 @@ export class Pipeline {
     this.root.dataset.live = 'true'
     this.root.querySelector('#pl-camera-name')!.textContent = cameraName.replace(/^RealSense /, '')
     this.set('rgb', setup.color)
-    this.set('depth', setup.depth === 'none' ? 'Off' : setup.depth === 'aligned' ? 'Aligned to RGB' : 'Raw', setup.depth !== 'none')
+    const hostAligns = setup.depth !== 'none' && setup.align === 'host'
+    this.set('depth', setup.depth === 'none' ? 'Off' : hostAligns ? 'Raw (host aligns)' : 'Aligned to RGB', setup.depth !== 'none')
     this.set('imu', setup.imu ? 'Gyro + accel' : 'None', setup.imu)
+    this.show({ align: hostAligns ? 'host' : 'camera', detect: setup.detect })
+    if (hostAligns) this.set('h-align', 'Depth → RGB')
   }
 
   /** Refresh the live values from a detection event, at most 4 times a second. */
@@ -97,9 +123,11 @@ export class Pipeline {
     const n = (f: (p: Detections['persons'][0]) => unknown) => persons.filter(f).length
 
     if (this.setup.imu) this.set('imu', d.camera_moving ? 'Camera moving' : 'Steady')
-    this.set('detect', `${persons.length} · ${rate.toFixed(0)} fps`)
-    this.set('com', persons.length ? `${n((p) => p.com_px)} of ${persons.length}` : '–', persons.length > 0)
-    this.set('distance', d.stats.min_m === null ? '–' : `${d.stats.min_m.toFixed(2)}–${d.stats.max_m!.toFixed(2)} m`, d.stats.min_m !== null)
+    const at = this.setup.detect === 'host' ? 'h-' : ''
+    const cost = at && d.host_detection_ms !== undefined ? ` · ${d.host_detection_ms.toFixed(0)} ms ${this.setup.device.toUpperCase()}` : ''
+    this.set(`${at}detect`, `${persons.length} · ${rate.toFixed(0)} fps${cost}`)
+    this.set(`${at}com`, persons.length ? `${n((p) => p.com_px)} of ${persons.length}` : '–', persons.length > 0)
+    this.set(`${at}distance`, d.stats.min_m === null ? '–' : `${d.stats.min_m.toFixed(2)}–${d.stats.max_m!.toFixed(2)} m`, d.stats.min_m !== null)
     const tracked = n((p) => p.track_id !== null)
     this.set('tracking', host.tracking ? `${tracked} tracked · ${n((p) => p.name)} named` : 'Off', host.tracking)
     const velocity = host.tracking && host.velocity

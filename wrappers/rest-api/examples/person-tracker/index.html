@@ -40,6 +40,23 @@
         </section>
 
         <section>
+          <h2><i data-icon="cpu"></i>Compute</h2>
+          <div class="where" data-where="align">
+            <span><i data-icon="depth"></i>Depth alignment</span>
+            <div class="seg" role="group" aria-label="Depth alignment runs on"><button data-v="camera">Camera</button><button data-v="host">Host</button></div>
+          </div>
+          <div class="where" data-where="detect">
+            <span><i data-icon="boxes"></i>Person detection</span>
+            <div class="seg" role="group" aria-label="Person detection runs on"><button data-v="camera">Camera</button><button data-v="host">Host</button></div>
+          </div>
+          <div id="host-device-row" class="where" hidden>
+            <span><i data-icon="cpu"></i>Host device</span>
+            <select id="host-device" aria-label="Host device for person detection"></select>
+          </div>
+          <p id="compute-note" class="muted compute-note"></p>
+        </section>
+
+        <section>
           <h2><i data-icon="layers"></i>Layers</h2>
           <button class="toggle" data-toggle="boxes"><i data-icon="boxes"></i><span>Person boxes</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="stats"><i data-icon="stats"></i><span>Distance stats</span><span class="switch"></span></button>
@@ -51,6 +68,7 @@
           <button class="toggle" data-toggle="depth"><i data-icon="depth"></i><span>Depth window</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="depthBg" title="Show the camera's aligned depth instead of color outside the person boxes"><i data-icon="depthBg"></i><span>Depth background</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="pipeline"><i data-icon="layers"></i><span>Data pipeline</span><span class="switch"></span></button>
+          <button class="toggle" data-toggle="usage" title="CPU, GPU and NPU used by the REST server process"><i data-icon="cpu"></i><span>Host usage</span><span class="switch"></span></button>
           <button class="toggle" data-toggle="blur"><i data-icon="blur"></i><span>Privacy blur</span><span class="switch"></span></button>
           <div class="slider">
             <label for="min-score"><i data-icon="target"></i><span>Min confidence</span><output id="min-score-value" for="min-score"></output></label>
@@ -87,6 +105,10 @@
           </div>
         </div>
         <div class="legend-bar"><span class="legend-title"><i data-icon="ruler" data-size="15"></i>Box color by distance</span><div id="legend" class="legend"></div></div>
+        <section id="usage-card" class="usage-card" aria-label="Host usage">
+          <span class="legend-title"><i data-icon="cpu" data-size="15"></i>Host usage · REST server process</span>
+          <div id="usage" class="usage"></div>
+        </section>
       </main>
 
       <div id="side" class="side">

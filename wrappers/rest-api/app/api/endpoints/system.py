@@ -5,7 +5,11 @@ import platform
 import subprocess
 import sys
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.api.dependencies import get_realsense_manager
+from app.models.system import SystemUsageInfo
+from app.services.rs_manager import RealSenseManager
 
 router = APIRouter()
 
@@ -26,6 +30,15 @@ def _enable_metadata_elevated(timeout: float = 120.0) -> int:
           f"try {{ $p = [Diagnostics.Process]::Start($psi); $p.WaitForExit(); exit $p.ExitCode }} "
           f"catch {{ $c = $_.Exception.NativeErrorCode; if (-not $c) {{ $c = 1 }}; exit $c }}")
     return subprocess.run(["powershell.exe", "-NoProfile", "-Command", ps], timeout=timeout).returncode
+
+
+@router.get("/usage", response_model=SystemUsageInfo)
+async def get_usage(rs_manager: RealSenseManager = Depends(get_realsense_manager)):
+    """This server process's CPU, memory, GPU and NPU use, sampled each second; null where not measurable.
+
+    The first call starts the sampler, so it returns nulls; it stops 10 s after the last call.
+    """
+    return SystemUsageInfo(**rs_manager.system_usage.get())
 
 
 @router.post("/enable-metadata")

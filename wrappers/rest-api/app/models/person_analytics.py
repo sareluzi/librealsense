@@ -1,7 +1,7 @@
 # License: Apache 2.0. See LICENSE file in root directory.
 # Copyright(c) 2026 RealSense, Inc. All Rights Reserved.
 
-from typing import Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,17 @@ class PersonAnalyticsConfig(BaseModel):
     velocity: bool = Field(True, description="Report each tracked person's velocity (needs tracking)")
     smoothing: bool = Field(True, description="Steady boxes and distances, keep a tracked person through a slightly "
                             "lower score or a few missed frames (needs tracking)")
+    detection: Literal["camera", "host"] = Field(
+        "camera", description="Where persons are detected: by the camera (its object_detection stream) or on this "
+                              "host with the camera's model (needs ONNX Runtime and the model file; color, and depth "
+                              "aligned to it for distances, must stream)")
+    host_device: Literal["cpu", "gpu"] = Field("cpu", description="Host device for detection on the host")
+
+
+class HostDetectionStatus(BaseModel):
+    available: bool
+    devices: List[str] = Field(description="Host devices detection can run on")
+    reason: Optional[str] = Field(None, description="Why host detection is unavailable")
 
 
 class TrackInfo(BaseModel):

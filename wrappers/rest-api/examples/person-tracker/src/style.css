@@ -962,3 +962,142 @@ canvas.taggable {
   outline: 2px solid var(--rs-accent);
   outline-offset: 1px;
 }
+
+/* ---- Host usage strip, under the legend ---- */
+.usage-card {
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--rs-border);
+}
+
+.usage {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 4px 20px;
+  margin-top: 6px;
+}
+
+.usage-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.usage-row .icon {
+  color: var(--rs-accent);
+}
+
+.usage-row b {
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-row small {
+  grid-column: 2 / 4;
+  color: var(--rs-dim);
+  font-size: 11px;
+}
+
+.usage-row small:empty {
+  display: none;
+}
+
+.usage-bar {
+  grid-column: 1 / 4;
+  height: 4px;
+  margin-top: 5px;
+  border-radius: 2px;
+  background: var(--rs-inset);
+  overflow: hidden;
+}
+
+.usage-bar > i {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  background: var(--rs-ok);
+  transition: width 0.4s ease;
+}
+
+.usage-note {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+/* ---- Compute: where alignment and detection run ---- */
+.where {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 14px;
+}
+
+.where > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.where > span .icon {
+  color: var(--rs-accent);
+}
+
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--rs-border);
+  border-radius: 8px;
+  background: var(--rs-inset);
+}
+
+.seg button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--rs-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.seg button[aria-pressed='true'] {
+  background: var(--rs-blue);
+  color: #fff;
+}
+
+.seg button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.seg button:focus-visible,
+.where select:focus-visible {
+  outline: 2px solid var(--rs-accent);
+  outline-offset: 1px;
+}
+
+.where select {
+  padding: 4px 8px;
+  border: 1px solid var(--rs-border);
+  border-radius: 8px;
+  background: var(--rs-inset);
+  color: var(--rs-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.compute-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pl-badge.pl-load {
+  color: var(--rs-warn);
+  border-color: color-mix(in srgb, var(--rs-warn) 50%, transparent);
+}

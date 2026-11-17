@@ -5,6 +5,7 @@ import './style.css'
 import {
   findCamera,
   getConfig,
+  getHostDetection,
   onDetections,
   openVideo,
   setAlignedDepth,
@@ -13,11 +14,13 @@ import {
   stopStream,
   type Camera,
   type Detections,
+  type HostDetection,
   type Resolution,
 } from './api'
 import { icon, renderIcons } from './icons'
 import { People } from './people'
 import { Pipeline } from './pipeline'
+import { UsageCard } from './usage'
 import { DISTANCE_BANDS, UNKNOWN_COLOR, drawFrame, drawMap, personAt } from './render'
 
 // Same expiry as realsense-viewer: older detections are dropped, so a stalled detector blurs everything
@@ -56,7 +59,8 @@ function showError(message: string | null) {
 }
 
 // Tracking, velocity and smoothing run on the server; the others only change what this page draws
-type Toggle = 'blur' | 'depthBg' | 'boxes' | 'stats' | 'com' | 'tracking' | 'velocity' | 'smoothing' | 'map' | 'depth' | 'pipeline'
+type Toggle =
+  | 'blur' | 'depthBg' | 'boxes' | 'stats' | 'com' | 'tracking' | 'velocity' | 'smoothing' | 'map' | 'depth' | 'pipeline' | 'usage'
 const toggles: Record<Toggle, boolean> = {
   blur: false,
   depthBg: true,
@@ -69,6 +73,7 @@ const toggles: Record<Toggle, boolean> = {
   map: true,
   depth: true,
   pipeline: true,
+  usage: true,
 }
 // Bumped when the defaults change, so everyone starts from the new ones
 const TOGGLES_KEY = 'person-tracker-toggles-v2'
@@ -133,10 +138,13 @@ function renderMap(d: Detections | null) {
   drawMap(mapCanvas.getContext('2d')!, d?.persons ?? [], d?.image ?? null)
 }
 
+const usage = new UsageCard($('usage'))
 function showMap() {
   $('map-card').hidden = !toggles.map
   $('depth-card').hidden = !toggles.depth
   $('pipeline-card').hidden = !toggles.pipeline
+  $('usage-card').hidden = !toggles.usage
+  usage.show(toggles.usage)
   $('side').hidden = !toggles.map && !toggles.depth && !toggles.pipeline
   renderMap(null)
 }
@@ -148,7 +156,14 @@ $('legend').innerHTML =
   DISTANCE_BANDS.map(([, c, label]) => swatch(c, label)).join('') + swatch(UNKNOWN_COLOR, 'Unknown')
 
 let latest: { d: Detections; at: number } | null = null
-let session: { deviceId: string; cam: Camera; depthMode: DepthMode; res: string; close: () => void } | null = null
+let session: {
+  deviceId: string
+  cam: Camera
+  depthMode: DepthMode
+  align: Where
+  res: string
+  close: () => void
+} | null = null
 
 // Color + depth resolution: 1280x720 unless the user picked another
 const resolutionEl = $<HTMLSelectElement>('resolution')
@@ -177,22 +192,80 @@ resolutionEl.onchange = () => {
   }
   if (session && session.res !== wantedRes) restart()
 }
-findCamera().then(showResolutions, () => (resolutionEl.innerHTML = '<option>No camera found</option>'))
+// Where depth alignment and person detection (with its distance and center of mass) run: on the camera, or
+// on this host to show what the camera saves it. Switching restarts the stream: alignment can change only
+// while depth is stopped, and host detection drops the camera's detection stream.
+type Where = 'camera' | 'host'
+const COMPUTE_KEY = 'person-tracker-compute'
+const compute: { align: Where; detect: Where; device: string } = { align: 'camera', detect: 'camera', device: 'cpu' }
+try {
+  Object.assign(compute, JSON.parse(localStorage.getItem(COMPUTE_KEY) ?? '{}'))
+} catch {
+  /* storage unavailable: keep defaults */
+}
+let knownCam: Camera | null = null
+let hostDetection: HostDetection | null = null
+const deviceEl = $<HTMLSelectElement>('host-device')
+// A camera that cannot align leaves it to the host; without the model or ONNX Runtime the camera detects
+const alignAt = (cam: Camera | null): Where => (cam && !cam.alignSensorId ? 'host' : compute.align)
+const detectAt = (): Where => (compute.detect === 'host' && hostDetection?.available ? 'host' : 'camera')
 
-// Depth always streams, aligned to color by the camera when it can, so the depth knobs only show or hide
-// it: the alignment can change only while depth is stopped.
-type DepthMode = 'none' | 'raw' | 'aligned'
-const depthMode = (cam: Camera): DepthMode => (!cam.hasDepth ? 'none' : cam.alignSensorId ? 'aligned' : 'raw')
+function showCompute() {
+  for (const row of document.querySelectorAll<HTMLElement>('[data-where]')) {
+    const key = row.dataset.where as 'align' | 'detect'
+    const at = key === 'align' ? alignAt(knownCam) : detectAt()
+    for (const b of row.querySelectorAll<HTMLButtonElement>('button')) {
+      b.setAttribute('aria-pressed', String(b.dataset.v === at))
+      b.disabled =
+        key === 'align'
+          ? !!knownCam && (!knownCam.hasDepth || (b.dataset.v === 'camera' && !knownCam.alignSensorId))
+          : b.dataset.v === 'host' && !hostDetection?.available
+    }
+  }
+  const devices = hostDetection?.devices ?? []
+  deviceEl.innerHTML = devices.map((d) => `<option value="${d}">${d.toUpperCase()}</option>`).join('')
+  deviceEl.value = devices.includes(compute.device) ? compute.device : (devices[0] ?? '')
+  $('host-device-row').hidden = detectAt() !== 'host'
+  $('compute-note').textContent = hostDetection?.available === false
+    ? `Person detection on the host is unavailable: ${hostDetection.reason}.`
+    : 'On the host, detection runs the camera\'s own model and finds distance and center of mass the way the camera does.'
+}
 
-function showDepthNote(cam: Camera | null, mode: DepthMode) {
+function setCompute(update: Partial<typeof compute>) {
+  Object.assign(compute, update)
+  try {
+    localStorage.setItem(COMPUTE_KEY, JSON.stringify(compute))
+  } catch {
+    /* ignore */
+  }
+  showCompute()
+  if (session) restart()
+}
+for (const row of document.querySelectorAll<HTMLElement>('[data-where]'))
+  for (const b of row.querySelectorAll<HTMLButtonElement>('button'))
+    b.onclick = () => setCompute({ [row.dataset.where!]: b.dataset.v as Where })
+deviceEl.onchange = () => setCompute({ device: deviceEl.value })
+
+async function loadCamera(cam: Camera) {
+  knownCam = cam
+  showResolutions(cam)
+  hostDetection = await getHostDetection(cam.deviceId).catch(() => null)
+  showCompute()
+}
+findCamera().then(loadCamera, () => (resolutionEl.innerHTML = '<option>No camera found</option>'))
+showCompute()
+
+// Depth always streams aligned to color (by the camera or the host), so the depth knobs only show or hide it
+type DepthMode = 'none' | 'aligned'
+const depthMode = (cam: Camera): DepthMode => (cam.hasDepth ? 'aligned' : 'none')
+
+function showDepthNote(cam: Camera | null, mode: DepthMode, align: Where = 'camera') {
   $('depth-empty').hidden = mode !== 'none' && !!cam
   $('depth-note').textContent = !cam
     ? 'Near is blue, far is red.'
     : !cam.hasDepth
       ? 'This camera has no depth stream.'
-      : mode === 'aligned'
-        ? 'Aligned to the color image by the camera. Near is blue, far is red.'
-        : 'This camera cannot align depth to color, so there is no depth background. Near is blue, far is red.'
+      : `Aligned to the color image by the ${align}. Near is blue, far is red.`
 }
 showDepthNote(null, 'none')
 const people = new People(showError)
@@ -205,9 +278,8 @@ function syncVelocityToggle() {
 }
 syncVelocityToggle()
 
-async function applyServerConfig() {
-  if (!session) return
-  const id = session.deviceId
+async function applyServerConfig(id = session?.deviceId) {
+  if (!id) return
   try {
     await setConfig(id, {
       ...(await getConfig(id)),
@@ -215,6 +287,8 @@ async function applyServerConfig() {
       tracking: toggles.tracking,
       velocity: toggles.velocity,
       smoothing: toggles.smoothing,
+      detection: detectAt(),
+      host_device: deviceEl.value || 'cpu',
     })
   } catch (e) {
     showError((e as Error).message)
@@ -294,16 +368,18 @@ async function start(known?: Camera) {
   try {
     const cam = known ?? (await findCamera())
     const mode = depthMode(cam)
-    // With depth, color switches to the depth resolution
-    showResolutions(cam)
+    await loadCamera(cam)
+    const align = alignAt(cam)
+    const detect = detectAt()
     const res = chosenResolution(cam)
-    const configs = cam.streams(res, mode !== 'none')
+    const configs = cam.streams(res, mode !== 'none', detect === 'camera')
     const { width, height } = res
     $('device-name').textContent = cam.name
     $('device-image').hidden = !/d585/i.test(cam.name) // product picture, when we have one
     $('device-detail').textContent = `Color ${width}×${height}${mode === 'none' ? '' : ' + depth'} @ ${configs[0].framerate} fps`
-    if (cam.alignSensorId && mode !== 'none') await setAlignedDepth(cam.deviceId, cam.alignSensorId, mode === 'aligned')
-    await startStream(cam.deviceId, configs)
+    await applyServerConfig(cam.deviceId) // before the stream, so the first frames go where they should
+    if (cam.alignSensorId && mode !== 'none') await setAlignedDepth(cam.deviceId, cam.alignSensorId, align === 'camera')
+    await startStream(cam.deviceId, configs, mode !== 'none' && align === 'host' ? 'color' : undefined)
     const unsubscribe = onDetections(cam.deviceId, (d) => {
       latest = { d, at: performance.now() }
       showStats(d)
@@ -324,14 +400,14 @@ async function start(known?: Camera) {
       deviceId: cam.deviceId,
       cam,
       depthMode: mode,
+      align,
       res: resKey(res),
       close: () => {
         unsubscribe()
         closers.forEach((c) => c())
       },
     }
-    showDepthNote(cam, mode)
-    await applyServerConfig()
+    showDepthNote(cam, mode, align)
     people.follow(cam.deviceId)
     await video.play().catch(() => {})
     if (mode !== 'none') await depthVideo.play().catch(() => {})
@@ -339,6 +415,9 @@ async function start(known?: Camera) {
     pipeline.start(cam.name, {
       color: `${width}×${height} @ ${configs[0].framerate} fps`,
       depth: mode,
+      align,
+      detect,
+      device: deviceEl.value,
       imu: configs.some((c) => c.stream_type === 'gyro'),
     })
     render()
@@ -350,7 +429,7 @@ async function start(known?: Camera) {
 
 async function stop() {
   if (!session) return
-  const { deviceId, cam, depthMode: mode, close } = session
+  const { deviceId, cam, depthMode: mode, align, close } = session
   session = null
   latest = null
   close()
@@ -367,7 +446,7 @@ async function stop() {
     showError(e.message)
   })
   // Leave the camera as we found it: other apps expect unaligned depth
-  if (mode === 'aligned') await setAlignedDepth(deviceId, cam.alignSensorId!, false).catch(() => {})
+  if (mode === 'aligned' && align === 'camera') await setAlignedDepth(deviceId, cam.alignSensorId!, false).catch(() => {})
 }
 
 startBtn.onclick = () => (session ? stop() : start())

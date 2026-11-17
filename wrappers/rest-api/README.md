@@ -209,6 +209,47 @@ turns it off to compare.
 `image.intrinsics` gives the color camera's focal lengths and principal point for drawing the
 vectors on the image.
 
+#### On the camera or on the host
+
+The page's Compute switches run depth alignment and person detection either on the camera (the
+default) or on this host, to show what the camera saves it. Switching restarts the stream.
+
+* **Depth alignment on the host**: the camera's `enable_aligned_depth` is turned off and the stream is
+  started with `"align_to": "color"`, so the server aligns depth with the SDK.
+* **Person detection on the host**: `PUT .../person-analytics/config` with `"detection": "host"` (and
+  `"host_device"`: `cpu`, or `gpu` with `onnxruntime-directml`). The camera's `object_detection`
+  stream is not started; the server runs the camera's own model (DAMO-YOLO,
+  `damo-epoch233-mean_ap0.668_inp_416_batch_1_bench.onnx`) on each color frame it has time for, and
+  finds each person's distance and center of mass in the aligned depth with a port of
+  `common/utilities/com/center-of-mass.cpp`, the code the viewer uses for the camera's calculation.
+  Events then carry `"source": "host"` and `host_detection_ms`.
+  It needs ONNX Runtime (`pip install onnxruntime`) and the model file at
+  `~/.realsense/models/` (`PERSON_DETECTOR_MODEL` in `config.py`); the model is internal and is not
+  part of this repository. `GET .../person-analytics/host-detection` says whether it can run and
+  why not; without it, only the camera's detection is offered.
+
+Measured on an 8-core Lunar Lake laptop (other apps running) at 1280x720, one person, as % of the
+whole machine:
+
+| Alignment / detection | Server process CPU | Host detection | Host alignment | Detections/s |
+|---|---|---|---|---|
+| camera / camera | 18.6% | - | - | 27.6 |
+| host / camera | 19.9% | - | 1.2% | 27.8 |
+| camera / host (CPU) | 28.6% | 10.4% | - | 14.6 |
+| host / host (CPU) | 31.0% | 10.0% | 1.5% | 13.6 |
+
+Host detection runs ONNX Runtime on one thread (about 35 ms per frame here): its default thread pool
+was only 1.5x faster for 4x the CPU.
+
+`GET /system/usage` reports this server process's share of the host, sampled once a second while
+asked: CPU (% of the whole machine, and the parts spent on host person processing, detection and
+alignment), memory, and on
+Windows its GPU and NPU use from the per-process "GPU Engine" counters. Anything the machine cannot
+measure (no `psutil`, no GPU or NPU, another OS) is `null`. The Person Tracker shows it under the
+video: detection, center of mass and distance run on the camera, so the host GPU and NPU stay idle and
+host perception takes a fraction of a percent of the CPU; most of the server's CPU goes to encoding the
+page's video.
+
 ### Running Tests
 
 The `run_tests.py` helper at the rest-api root runs both the backend pytest suite and the React viewer Vitest suite:

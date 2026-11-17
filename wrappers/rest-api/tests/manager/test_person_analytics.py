@@ -144,8 +144,9 @@ def test_config_endpoint_round_trip(monkeypatch):
     client = TestClient(app)
     url = "/api/v1/devices/dev/person-analytics/config"
     assert client.get(url).json() == {"nms_score": 45, "nms_iou": 0.55, "tracking": True, "velocity": True,
-                                     "smoothing": True}
-    new = {"nms_score": 60, "nms_iou": 0.4, "tracking": False, "velocity": False, "smoothing": False}
+                                     "smoothing": True, "detection": "camera", "host_device": "cpu"}
+    new = {"nms_score": 60, "nms_iou": 0.4, "tracking": False, "velocity": False, "smoothing": False,
+           "detection": "camera", "host_device": "cpu"}
     assert client.put(url, json=new).json() == new
     assert client.get(url).json() == new
     assert client.put(url, json={"nms_score": 101, "nms_iou": 0.4}).status_code == 422
