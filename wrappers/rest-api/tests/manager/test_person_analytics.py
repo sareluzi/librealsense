@@ -143,8 +143,9 @@ def test_config_endpoint_round_trip(monkeypatch):
     monkeypatch.setattr(dependencies, "_realsense_manager", mgr)
     client = TestClient(app)
     url = "/api/v1/devices/dev/person-analytics/config"
-    assert client.get(url).json() == {"nms_score": 45, "nms_iou": 0.55, "tracking": True, "velocity": True}
-    new = {"nms_score": 60, "nms_iou": 0.4, "tracking": False, "velocity": False}
+    assert client.get(url).json() == {"nms_score": 45, "nms_iou": 0.55, "tracking": True, "velocity": True,
+                                     "smoothing": True}
+    new = {"nms_score": 60, "nms_iou": 0.4, "tracking": False, "velocity": False, "smoothing": False}
     assert client.put(url, json=new).json() == new
     assert client.get(url).json() == new
     assert client.put(url, json={"nms_score": 101, "nms_iou": 0.4}).status_code == 422
@@ -201,6 +202,43 @@ def test_velocity_off_in_config():
     p = _walk_past(pa)["persons"][0]
     assert p["track_id"] is not None and p["velocity"] is None
 
+
+
+def _still(pa, frames, score=lambda n: 90, box=lambda n: [400, 200, 500, 500], start=0):
+    """A person standing still (box per frame), at 30 fps; returns the payloads."""
+    return [pa.on_od_frame("dev", _OdFrame([_det(box(n), score=score(n))] if box(n) else [], frame_number=n,
+                                           timestamp=1e6 + n * 1000 / 30), _ColorFrame())
+            for n in range(start, start + frames)]
+
+
+def test_smoothing_keeps_a_tracked_person_through_a_lower_score_and_a_short_miss():
+    pa = PersonAnalytics(MagicMock())
+    out = _still(pa, 10)
+    out += _still(pa, 3, score=lambda n: 40, start=10)  # below the 45 minimum, within the hysteresis
+    out += _still(pa, 2, box=lambda n: None, start=13)  # missed by the detector
+    assert [len(p["persons"]) for p in out] == [1] * 15
+    assert [p["persons"][0]["held"] for p in out[-3:]] == [False, True, True]
+    assert out[-1]["stats"]["count"] == 1
+    # ... but not past the hold, and a new person still needs the minimum score
+    assert _still(pa, 3, box=lambda n: None, start=15)[-1]["persons"] == []
+    assert _still(PersonAnalytics(MagicMock()), 5, score=lambda n: 40)[-1]["persons"] == []
+
+
+def test_smoothing_off_reports_raw_boxes_and_drops_misses():
+    pa = PersonAnalytics(MagicMock())
+    pa.set_config("dev", PersonAnalyticsConfig(smoothing=False))
+    jitter = lambda n: [400 + (n % 2) * 6, 200, 500, 500]
+    assert _still(pa, 10, box=jitter)[-1]["persons"][0]["bbox"] == jitter(9)
+    assert _still(pa, 1, score=lambda n: 40, start=10)[0]["persons"] == []
+    assert _still(pa, 1, box=lambda n: None, start=11)[0]["persons"] == []
+
+
+def test_smoothing_steadies_box_size():
+    pa = PersonAnalytics(MagicMock())
+    noise = np.random.default_rng(0).normal(0, 4, 60).round().astype(int)
+    out = _still(pa, 60, box=lambda n: [400, 200, 500 + noise[n], 500])
+    widths = np.array([p["persons"][0]["bbox"][2] - p["persons"][0]["bbox"][0] for p in out[30:]])
+    assert np.mean(np.abs(np.diff(widths))) < np.mean(np.abs(np.diff(noise[30:]))) / 3
 
 
 def test_camera_moving_from_imu():

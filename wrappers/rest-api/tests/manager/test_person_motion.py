@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from app.services import person_motion as pm
-from app.services.person_motion import CameraMotion, Motion
+from app.services.person_motion import BoxSmoother, CameraMotion, Motion
 
 FPS = 30
 
@@ -111,3 +111,35 @@ def test_imu_silence_is_unknown():
     c = CameraMotion()
     t = imu(c)
     assert c.moving(t + pm.IMU_TIMEOUT_S + 0.1) is None
+
+
+def smooth_track(x_of_t, seconds=4.0, noise=3.0, seed=1):
+    """Center x of a 100 px box at x_of_t(t), with edge noise (px), through a BoxSmoother at 30 fps."""
+    rng = np.random.default_rng(seed)
+    s = BoxSmoother()
+    out = []
+    for i in range(int(seconds * FPS)):
+        t = i / FPS
+        x = x_of_t(t)
+        box, _ = s.update([x + rng.normal(0, noise), 100, x + 100 + rng.normal(0, noise), 400], None, 1000 + t)
+        out.append((box[0] + box[2]) / 2 - (x + 50))  # error vs the true center
+    return np.array(out)
+
+
+def test_box_smoother_steadies_a_still_box():
+    # Raw, the center moves ~2.4 px a frame with this noise
+    assert np.mean(np.abs(np.diff(smooth_track(lambda t: 300)[30:]))) < 0.8
+
+
+def test_box_smoother_follows_walking_and_jumps_quickly():
+    assert abs(np.mean(smooth_track(lambda t: 100 + 400 * t)[30:])) < 10  # 400 px/s: under ~25 ms behind
+    err = smooth_track(lambda t: 100 if t < 2 else 250, noise=0)
+    jump = 2 * FPS
+    assert abs(err[jump + 2]) < 10 and abs(err[jump + 4]) < 2
+
+
+def test_box_smoother_predicts_a_moving_box():
+    s = BoxSmoother()
+    for i in range(30):
+        s.update([100 + 10 * i, 0, 200 + 10 * i, 100], 2.0, i / FPS)  # 300 px/s
+    assert s.predict(30 / FPS)[0] == pytest.approx(400, abs=5)

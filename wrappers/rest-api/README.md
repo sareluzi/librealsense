@@ -174,7 +174,7 @@ detection frame:
   "camera_moving": false,
   "persons": [{"bbox": [688, 314, 993, 693], "score": 85, "distance_m": 1.26, "world": [0.55, -0.23, 1.11],
                "com_px": [842.0, 401.3],
-               "track_id": 4, "name": "Alice",
+               "track_id": 4, "name": "Alice", "held": false,
                "velocity": {"position": [0.55, -0.23, 1.11], "vx": 0.9, "vy": 0.0, "vz": -0.4,
                             "speed_mps": 0.98, "heading_deg": 114.0, "moving": true}}],
   "stats": {"count": 1, "min_m": 1.26, "max_m": 1.26, "avg_m": 1.26} }
@@ -200,6 +200,12 @@ for the first few frames of a track. The filter runs on the full 3D position (th
 above, or the box center at the camera's distance when there is none): `position` is the filtered
 position, `vx`/`vy`/`vz` the 3D velocity and `speed_mps` its magnitude. `heading_deg` is on the floor
 plane (0° = away from the camera, 90° = to its right), and `moving` is false below 0.2 m/s. One-frame position glitches from the camera are ignored.
+`smoothing` (`"smoothing": true` in the config, the default; needs tracking) steadies each tracked
+person's box and distance with a One Euro filter: strong smoothing while a person stands still, almost
+none while they move, so boxes stop jittering without lagging behind movement. A confirmed person also
+stays while scored up to 10 below `nms_score`, and through up to 3 OD frames the camera misses (`held`:
+true, the box moved on at its last speed), so boxes do not flicker. The page's "Stable boxes" switch
+turns it off to compare.
 `image.intrinsics` gives the color camera's focal lengths and principal point for drawing the
 vectors on the image.
 

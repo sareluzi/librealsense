@@ -12,6 +12,8 @@ class PersonAnalyticsConfig(BaseModel):
     nms_iou: float = Field(0.55, ge=0.0, le=1.0, description="Overlap above which the lower-scored box is dropped")
     tracking: bool = Field(True, description="Keep an ID and name on each person across frames")
     velocity: bool = Field(True, description="Report each tracked person's velocity (needs tracking)")
+    smoothing: bool = Field(True, description="Steady boxes and distances, keep a tracked person through a slightly "
+                            "lower score or a few missed frames (needs tracking)")
 
 
 class TrackInfo(BaseModel):

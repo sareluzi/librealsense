@@ -16,6 +16,7 @@ export interface Person {
   track_id: number | null // null until the track is confirmed, or with tracking off
   name: string | null
   velocity: Velocity | null // null until settled, or with tracking or velocity off
+  held: boolean // missed by the detector this frame: kept where it was heading (smoothing)
 }
 
 export interface Velocity {
@@ -53,6 +54,7 @@ export interface AnalyticsConfig {
   nms_iou: number
   tracking: boolean
   velocity: boolean
+  smoothing: boolean
 }
 
 export interface Detections {

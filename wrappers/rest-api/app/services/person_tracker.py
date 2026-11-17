@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
-from app.services.person_motion import Motion
+from app.services.person_motion import BoxSmoother, Motion
 
 # Clothing color feature, per body part (torso, legs): a hue x saturation histogram of colored
 # pixels plus a brightness histogram of grey ones, so black/white/grey clothes count too
@@ -39,6 +39,10 @@ MAX_COST = 0.75     # worst match cost still accepted
 MIN_SIM = 0.6       # appearance needed to match a track whose box does not overlap
 REID_SIM = 0.8      # appearance needed to re-attach a lost track or saved identity
 MAX_STEP_M = 1.0    # 3D distance beyond which a detection is not the same person
+SCORE_HYSTERESIS = 10  # with smoothing, a confirmed person stays while scored this far below the minimum
+HOLD_FRAMES = 3     # with smoothing, a confirmed person's box stays this many missed OD frames (~0.1 s)
+HOLD_MAX_IOU = 0.1  # ... unless the held box would overlap a reported one
+FRAME_S = 1 / 30    # frame time assumed when no timestamps are given
 
 
 def iou(a: Sequence[float], b: Sequence[float]) -> float:
@@ -143,6 +147,8 @@ class Track:
         self.bbox: Optional[List[int]] = None
         self.world: Optional[List[float]] = None
         self.motion = Motion()
+        self.smoother = BoxSmoother()
+        self.shown: Optional[Dict[str, Any]] = None  # last reported person, for holding it through a miss
         self.hits = 0
         self.misses = MAX_MISSES + 1 if gallery else 0  # saved identities start out lost
         self.last_seen = time.monotonic()
@@ -171,6 +177,7 @@ class PersonTracker:
         self._lock = threading.Lock()
         self._tracks: Dict[int, Track] = {}
         self._next_id = 1
+        self._frames = 0
         for name, gallery in identities.load().items():
             self._add(Track(0, name, gallery))
 
@@ -194,19 +201,26 @@ class PersonTracker:
                 + 0.35 * (1 - sim if sim is not None else 0.5))
 
     def update(self, persons: List[Dict[str, Any]], features: List[Optional[np.ndarray]],
-               positions: Optional[List[Optional[List[float]]]] = None, when: Optional[float] = None) -> None:
+               positions: Optional[List[Optional[List[float]]]] = None, when: Optional[float] = None,
+               min_score: int = 0, smooth: bool = False) -> List[Dict[str, Any]]:
         """Match one OD frame's persons to tracks; sets each person's `track_id`, `name` and `velocity`.
 
         `positions` (3D, m) and `when` (camera time, s) of the persons feed each track's velocity.
+        Persons scored below `min_score` only continue a confirmed track. With `smooth`, boxes and
+        distances are smoothed and a confirmed person missed for a few frames is held (`held`: True).
+        Returns the persons to report.
         """
         now = time.monotonic()
+        self._frames += 1
+        when = self._frames * FRAME_S if when is None else when
         with self._lock:
             assigned: Dict[int, Track] = {}  # person index -> track
 
             # 1. Present tracks, cheapest pairs first
             present = [t for t in self._tracks.values() if t.present]
             pairs = sorted((c, ti, di) for ti, t in enumerate(present) for di, p in enumerate(persons)
-                           if (c := self._cost(t, p, features[di])) is not None and c <= MAX_COST)
+                           if (p["score"] >= min_score or t.confirmed)
+                           and (c := self._cost(t, p, features[di])) is not None and c <= MAX_COST)
             used = set()
             for _, ti, di in pairs:
                 if ti not in used and di not in assigned:
@@ -215,7 +229,7 @@ class PersonTracker:
 
             # 2. Persons left over: someone who left (or a saved identity) coming back
             for di in range(len(persons)):
-                if di in assigned or features[di] is None:
+                if di in assigned or features[di] is None or persons[di]["score"] < min_score:
                     continue
                 lost = [(t.appearance_sim(features[di]) or 0, t) for t in self._tracks.values()
                         if not t.present and t not in assigned.values()]
@@ -225,7 +239,7 @@ class PersonTracker:
 
             # 3. Everyone else is new
             for di in range(len(persons)):
-                if di not in assigned:
+                if di not in assigned and persons[di]["score"] >= min_score:
                     assigned[di] = self._add(Track(0))
 
             for di, t in assigned.items():
@@ -238,20 +252,29 @@ class PersonTracker:
                 clean = all(iou(p["bbox"], q["bbox"]) < 0.1 for q in persons if q is not p)
                 if f is not None and clean and (len(t.gallery) < 5 or t.hits % 3 == 0):
                     t.gallery.append(f)
-                if positions and positions[di] and when is not None:
+                if positions and positions[di]:
                     t.motion.update(positions[di], when)
+                if smooth:
+                    p["bbox"], p["distance_m"] = t.smoother.update(p["bbox"], p["distance_m"], when)
                 p["track_id"] = t.id if t.confirmed else None
                 p["name"] = t.name
                 p["velocity"] = t.motion.velocity() if t.confirmed else None
+                t.shown = p
+            reported = [p for di, p in enumerate(persons) if di in assigned]
 
             for t in list(self._tracks.values()):
                 if t in assigned.values():
                     continue
                 t.misses += 1
+                box = t.smoother.predict(when) if smooth and t.confirmed and t.shown and t.misses <= HOLD_FRAMES else None
+                # Not when the person already shows under another box (e.g. picked up by a new track)
+                if box and all(iou(box, r["bbox"]) <= HOLD_MAX_IOU for r in reported):
+                    reported.append(dict(t.shown, bbox=box, held=True, velocity=t.motion.velocity(), name=t.name))
                 if t.misses == MAX_MISSES + 1 and t.name:
                     self._identities.put(t.name, t.gallery)  # keep what we learned about them
                 if not t.present and t.name is None and (not t.confirmed or now - t.last_seen > LOST_TTL_S):
                     del self._tracks[t.id]
+            return reported
 
     def tracks(self) -> List[Dict[str, Any]]:
         now = time.monotonic()

@@ -17,7 +17,7 @@ import numpy as np
 
 from app.models.person_analytics import PersonAnalyticsConfig
 from app.services.person_motion import CameraMotion
-from app.services.person_tracker import IdentityStore, PersonTracker, appearance, iou
+from app.services.person_tracker import SCORE_HYSTERESIS, IdentityStore, PersonTracker, appearance, iou
 
 PERSON_CLASS_ID = 0
 EVENT_NAME = "person_detections"
@@ -126,7 +126,9 @@ class PersonAnalytics:
             return None
         self._last_od_numbers[device_id] = od_frame.get_frame_number()
         cfg = self.get_config(device_id)
-        persons = suppress(read_persons(od_frame), cfg.nms_score, cfg.nms_iou)
+        smooth = cfg.tracking and cfg.smoothing
+        # With smoothing, the tracker keeps confirmed persons scored a little below the minimum
+        persons = suppress(read_persons(od_frame), cfg.nms_score - (SCORE_HYSTERESIS if smooth else 0), cfg.nms_iou)
         payload: Dict[str, Any] = {
             "device_id": device_id,
             "od_frame_number": od_frame.get_frame_number(),
@@ -135,7 +137,7 @@ class PersonAnalytics:
             "color_frame_number": None,
             "image": None,
             "persons": persons,
-            "stats": distance_stats(persons),
+            "stats": None,
             # True while the camera itself moves (velocities are then relative to it), None without IMU
             "camera_moving": None,
         }
@@ -152,13 +154,16 @@ class PersonAnalytics:
         payload["image"] = self._images.get(device_id)
         for p in persons:
             p["track_id"] = p["name"] = p["velocity"] = None
+            p["held"] = False
         if cfg.tracking:
             intrinsics = payload["image"]["intrinsics"] if payload["image"] else None
             features = [appearance(image, p["bbox"]) if image is not None else None for p in persons]
             positions = [position(p, intrinsics) for p in persons]
-            self.tracker(device_id).update(persons, features, positions, od_frame.get_timestamp() / 1000)
+            persons = self.tracker(device_id).update(persons, features, positions, od_frame.get_timestamp() / 1000,
+                                                     cfg.nms_score, smooth)
             if not cfg.velocity:
                 for p in persons:
                     p["velocity"] = None
+        payload["persons"], payload["stats"] = persons, distance_stats(persons)
         self._emit(EVENT_NAME, payload)
         return payload

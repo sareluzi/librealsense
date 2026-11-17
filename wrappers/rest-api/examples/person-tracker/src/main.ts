@@ -55,8 +55,8 @@ function showError(message: string | null) {
   el.textContent = message ?? ''
 }
 
-// Tracking and velocity run on the server; the others only change what this page draws
-type Toggle = 'blur' | 'depthBg' | 'boxes' | 'stats' | 'com' | 'tracking' | 'velocity' | 'map' | 'depth' | 'pipeline'
+// Tracking, velocity and smoothing run on the server; the others only change what this page draws
+type Toggle = 'blur' | 'depthBg' | 'boxes' | 'stats' | 'com' | 'tracking' | 'velocity' | 'smoothing' | 'map' | 'depth' | 'pipeline'
 const toggles: Record<Toggle, boolean> = {
   blur: false,
   depthBg: true,
@@ -65,6 +65,7 @@ const toggles: Record<Toggle, boolean> = {
   com: true,
   tracking: true,
   velocity: true,
+  smoothing: true,
   map: true,
   depth: true,
   pipeline: true,
@@ -86,7 +87,7 @@ for (const name of Object.keys(toggles) as Toggle[]) {
     sync()
     statsEl.hidden = !toggles.stats
     showMap()
-    if (name === 'tracking' || name === 'velocity') applyServerConfig()
+    if (name === 'tracking' || name === 'velocity' || name === 'smoothing') applyServerConfig()
     syncVelocityToggle()
     try {
       localStorage.setItem(TOGGLES_KEY, JSON.stringify(toggles))
@@ -197,9 +198,10 @@ showDepthNote(null, 'none')
 const people = new People(showError)
 const pipeline = new Pipeline($('pipeline'))
 
-// Velocity needs tracking: its toggle is greyed out while tracking is off
+// Velocity and smoothing need tracking: their toggles are greyed out while tracking is off
 function syncVelocityToggle() {
-  document.querySelector('[data-toggle="velocity"]')!.classList.toggle('needs', !toggles.tracking)
+  for (const name of ['velocity', 'smoothing'])
+    document.querySelector(`[data-toggle="${name}"]`)!.classList.toggle('needs', !toggles.tracking)
 }
 syncVelocityToggle()
 
@@ -212,6 +214,7 @@ async function applyServerConfig() {
       nms_score: Number(minScore.value),
       tracking: toggles.tracking,
       velocity: toggles.velocity,
+      smoothing: toggles.smoothing,
     })
   } catch (e) {
     showError((e as Error).message)
