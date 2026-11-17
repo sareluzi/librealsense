@@ -119,9 +119,6 @@ export interface Camera {
   streams: (res: Resolution, depth: boolean) => StreamConfig[] // color, OD, the IMU when present, and depth if asked
 }
 
-// Measured on the D585: with 1280x960 depth, its person detections come without a distance
-export const losesDistanceWithDepth = (r: Resolution) => r.width === 1280 && r.height === 960
-
 /** First camera with an object detection stream, and the streams to start on it. */
 export async function findCamera(): Promise<Camera> {
   const devices = await request<{ device_id: string; name: string }[]>('GET', '/devices/')

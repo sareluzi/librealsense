@@ -164,7 +164,7 @@ the first build). The page starts color + `depth` + `object_detection` (+ `gyro`
 present) with `POST /devices/{id}/stream/start`, after setting the depth sensor's `enable_aligned_depth`
 option when the camera has it (it can change only while depth is stopped). Depth always streams, so
 the depth layers only show or hide it. Color and depth share the selected resolution, so they match
-pixel for pixel (with 1280x960 depth the D585 reports persons without a distance). It plays color and
+pixel for pixel (at 1280x960, D585 firmware before 7.62 reports persons without a distance). It plays color and
 depth over WebRTC and draws the server's `person_detections` Socket.IO events, sent once per
 detection frame:
 

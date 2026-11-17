@@ -11,7 +11,6 @@ import {
   setConfig,
   startStream,
   stopStream,
-  losesDistanceWithDepth,
   type Camera,
   type Detections,
   type Resolution,
@@ -161,10 +160,7 @@ try {
 }
 function showResolutions(cam: Camera) {
   resolutionEl.innerHTML = cam.resolutions
-    .map((r) => {
-      const note = cam.hasDepth && losesDistanceWithDepth(r) ? ' (no person distances)' : ''
-      return `<option value="${resKey(r)}">${r.width} × ${r.height}${note}</option>`
-    })
+    .map((r) => `<option value="${resKey(r)}">${r.width} × ${r.height}</option>`)
     .join('')
   resolutionEl.value = cam.resolutions.some((r) => resKey(r) === wantedRes) ? wantedRes : resKey(cam.resolutions[0])
   resolutionEl.disabled = false
@@ -193,11 +189,9 @@ function showDepthNote(cam: Camera | null, mode: DepthMode) {
     ? 'Near is blue, far is red.'
     : !cam.hasDepth
       ? 'This camera has no depth stream.'
-      : mode !== 'none' && losesDistanceWithDepth(chosenResolution(cam))
-        ? 'At this resolution the camera reports persons without a distance: pick 1280 × 720 or lower.'
-        : mode === 'aligned'
-          ? 'Aligned to the color image by the camera. Near is blue, far is red.'
-          : 'This camera cannot align depth to color, so there is no depth background. Near is blue, far is red.'
+      : mode === 'aligned'
+        ? 'Aligned to the color image by the camera. Near is blue, far is red.'
+        : 'This camera cannot align depth to color, so there is no depth background. Near is blue, far is red.'
 }
 showDepthNote(null, 'none')
 const people = new People(showError)
